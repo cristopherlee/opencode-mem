@@ -107,7 +107,7 @@ export class LocalMemoryClient {
     try {
       await this.initialize();
 
-      const queryVector = await embeddingService.embedWithTimeout(query);
+      const queryVector = await embeddingService.embedWithTimeout(query, { task: "query" });
       const resolved = resolveScopeValue(scope, containerTag);
       const shards = await tursoShardManager.getAllShards(resolved.scope, resolved.hash);
 
@@ -162,11 +162,13 @@ export class LocalMemoryClient {
       await this.initialize();
 
       const tags = metadata?.tags || [];
-      const vector = await embeddingService.embedWithTimeout(content);
+      const vector = await embeddingService.embedWithTimeout(content, { task: "document" });
       let tagsVector: Float32Array | undefined = undefined;
 
       if (tags.length > 0) {
-        tagsVector = await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags));
+        tagsVector = await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags), {
+          task: "document",
+        });
       }
 
       const { scope, hash } = extractScopeFromContainerTag(containerTag);

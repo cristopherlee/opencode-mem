@@ -140,6 +140,9 @@ The plugin creates a full commented template at this path on first startup. This
   "userEmailOverride": "user@example.com",
   "userNameOverride": "John Doe",
   "embeddingModel": "Xenova/nomic-embed-text-v1",
+  // Optional Nomic task prefixes (search_document: / search_query:). After enabling,
+  // re-index existing memories so store and query vectors stay aligned.
+  // "embeddingUseTaskPrefixes": true,
   // Optional OpenAI-compatible embedding endpoint:
   // "embeddingApiUrl": "https://api.openai.com/v1",
   // "embeddingApiKey": "env://OPENAI_API_KEY",

@@ -240,6 +240,20 @@ export class MigrationService {
           })
       );
       reEmbeddedCount += migrated;
+            processedCount++;
+            this.reportProgress({
+              phase: "re-embedding",
+              processed: processedCount,
+              total: totalMemories,
+              currentShard: String(shardInfo.shardId),
+            });
+            log("Migration: memory staged for re-embed", {
+              shardId: shardInfo.shardId,
+              memoryId: processed,
+            });
+          })
+      );
+      reEmbeddedCount += migrated;
     }
 
     this.reportProgress({
@@ -292,10 +306,10 @@ export class MigrationService {
                 .filter(Boolean)
             : [];
           const embeddingInput = tags.length > 0 ? `${content}\nTags: ${tags.join(", ")}` : content;
-          const vector = await embeddingService.embedWithTimeout(embeddingInput);
+          const vector = await embeddingService.embedWithTimeout(embeddingInput, { task: "document" });
           const tagsVector =
             tags.length > 0
-              ? await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags))
+              ? await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags), { task: "document" })
               : undefined;
 
           stagedBatch.push({
