@@ -51,7 +51,7 @@ async function fetchAPI(endpoint, options = {}) {
     const timeoutMs =
       options.timeout ||
       (options.method === "POST" && endpoint.includes("/ai-cleanup") ? 180000 : 60000);
-    const { timeout: _, ...fetchOptions } = options;
+    const { timeout: _, headers: extraHeaders, ...fetchOptions } = options;
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const headers = new Headers(extraHeaders || {});
     if (API_TOKEN) {
