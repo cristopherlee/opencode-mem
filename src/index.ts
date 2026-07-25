@@ -20,8 +20,13 @@ import type { MemoryScope } from "./services/client.js";
 import { getHostClientConfig } from "./services/ai/opencode-host-config.js";
 import { loadOpencodeProvider } from "./services/ai/opencode-provider-loader.js";
 
-/** Title used for transient structured-output sessions (capture / profile learning). */
-export const INTERNAL_CAPTURE_SESSION_TITLE = "opencode-mem capture";
+import {
+  INTERNAL_CAPTURE_SESSION_TITLE,
+  isInternalCaptureSessionTitle,
+  isTrackedInternalCaptureSession,
+} from "./services/ai/internal-capture-sessions.js";
+
+export { INTERNAL_CAPTURE_SESSION_TITLE, isInternalCaptureSessionTitle };
 
 export function isStructuredSummaryPromptMessage(userMessage: string): boolean {
   // This is the plugin's own structured-summary or profile-analysis request.
@@ -33,26 +38,53 @@ export function isStructuredSummaryPromptMessage(userMessage: string): boolean {
   return userMessage.includes("Analyze this conversation.") && userMessage.includes('type="skip"');
 }
 
-export function isInternalCaptureSessionTitle(title: string | undefined | null): boolean {
-  return title === INTERNAL_CAPTURE_SESSION_TITLE;
+function extractSessionTitle(response: unknown): string | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const obj = response as {
+    data?: { title?: string };
+    title?: string;
+  };
+  return obj.data?.title ?? obj.title;
 }
 
 async function isInternalCaptureSession(client: unknown, sessionID: string): Promise<boolean> {
-  const sessionGet = (client as { session?: { get?: (args: unknown) => Promise<unknown> } })
-    ?.session?.get;
-  if (typeof sessionGet !== "function") {
-    return false;
+  // Fast path: sessions we created ourselves (survives brief post-delete window).
+  if (isTrackedInternalCaptureSession(sessionID)) {
+    return true;
   }
-  try {
-    const response = (await sessionGet({
-      sessionID,
-      path: { id: sessionID },
-    })) as { data?: { title?: string }; title?: string } | undefined;
-    const title = response?.data?.title ?? response?.title;
-    return isInternalCaptureSessionTitle(title);
-  } catch {
-    return false;
+
+  const sessionClient = (
+    client as {
+      session?: {
+        get?: (args: unknown) => Promise<unknown>;
+      };
+    }
+  )?.session;
+
+  // Plugin host client uses path-based args (same as session.messages).
+  if (typeof sessionClient?.get === "function") {
+    try {
+      const response = await sessionClient.get({ path: { id: sessionID } });
+      const title = extractSessionTitle(response);
+      if (isInternalCaptureSessionTitle(title)) {
+        return true;
+      }
+      log("internal capture session check via session.get", {
+        sessionID,
+        title: title ?? null,
+        matched: false,
+      });
+    } catch (error) {
+      log("internal capture session check via session.get failed", {
+        sessionID,
+        error: String(error),
+      });
+    }
+  } else {
+    log("internal capture session check: session.get unavailable", { sessionID });
   }
+
+  return false;
 }
 
 export async function configureOpencodeHostTransport(ctx: {
