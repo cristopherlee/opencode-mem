@@ -278,7 +278,7 @@ Troubleshooting:
 - If auto-capture reports that a provider is not connected, confirm the provider name with `opencode providers list` and configure that provider in opencode first.
 - If a proxy or custom provider returns plain text instead of structured/tool output, choose another model/provider or use one of the manual provider modes above.
 - For models that reject `temperature`, add `"memoryTemperature": false` when using manual API configuration.
-- **Intel Mac (darwin/x64) local embedding:** if embedding init fails (missing onnxruntime x64 binding), switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`, or clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node`. See [Choosing / configuring embeddings](#choosing--configuring-embeddings). MLX is not supported.
+- **Intel Mac (darwin/x64) local embedding:** if embedding init fails (missing onnxruntime x64 binding), switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`, or clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node`. See [Choosing / configuring embeddings](#choosing-configuring-embeddings). MLX is not supported.
 
 ## Public Subpath Exports
 
