@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  applyStructuredOutputAgentConfig,
   configureOpencodeHostTransport,
   INTERNAL_CAPTURE_SESSION_TITLE,
   isInternalCaptureSessionTitle,
@@ -14,6 +15,8 @@ import {
   generateStructuredOutput,
   resetHostFetch,
   setHostFetch,
+  STRUCTURED_OUTPUT_AGENT,
+  STRUCTURED_OUTPUT_TOOLS,
 } from "../src/services/ai/opencode-provider.js";
 import { z } from "zod";
 
@@ -164,5 +167,27 @@ describe("internal capture session title", () => {
     expect(isInternalCaptureSessionTitle("")).toBe(false);
     expect(isInternalCaptureSessionTitle(undefined)).toBe(false);
     expect(isInternalCaptureSessionTitle(null)).toBe(false);
+  });
+});
+
+describe("structured-output agent config (issue #189)", () => {
+  it("registers a step-capped least-privilege agent", () => {
+    const cfg: { agent?: Record<string, unknown> } = {
+      agent: { build: { mode: "primary" } },
+    };
+    applyStructuredOutputAgentConfig(cfg);
+
+    expect(cfg.agent?.build).toEqual({ mode: "primary" });
+    expect(cfg.agent?.[STRUCTURED_OUTPUT_AGENT]).toEqual({
+      description: "Internal least-privilege agent for opencode-mem structured output",
+      mode: "subagent",
+      steps: 2,
+      maxSteps: 2,
+      tools: STRUCTURED_OUTPUT_TOOLS,
+      permission: {
+        "*": "deny",
+        StructuredOutput: "allow",
+      },
+    });
   });
 });

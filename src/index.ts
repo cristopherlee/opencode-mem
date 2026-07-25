@@ -21,6 +21,11 @@ import { getLanguageName } from "./services/language-detector.js";
 import type { MemoryScope } from "./services/client.js";
 import { getHostClientConfig } from "./services/ai/opencode-host-config.js";
 import { loadOpencodeProvider } from "./services/ai/opencode-provider-loader.js";
+import {
+  isInternalStructuredSession,
+  STRUCTURED_OUTPUT_AGENT,
+  STRUCTURED_OUTPUT_TOOLS,
+} from "./services/ai/opencode-provider.js";
 
 import {
   INTERNAL_CAPTURE_SESSION_TITLE,
@@ -87,6 +92,25 @@ async function isInternalCaptureSession(client: unknown, sessionID: string): Pro
   }
 
   return false;
+}
+
+/** Least-privilege agent used only by internal structured-output sessions (issue #189). */
+export function applyStructuredOutputAgentConfig(cfg: { agent?: Record<string, unknown> }): void {
+  cfg.agent = {
+    ...cfg.agent,
+    [STRUCTURED_OUTPUT_AGENT]: {
+      description: "Internal least-privilege agent for opencode-mem structured output",
+      mode: "subagent",
+      // OpenCode reads `steps` at runtime; SDK AgentConfig also documents maxSteps.
+      steps: 2,
+      maxSteps: 2,
+      tools: STRUCTURED_OUTPUT_TOOLS,
+      permission: {
+        "*": "deny",
+        StructuredOutput: "allow",
+      },
+    },
+  };
 }
 
 export async function configureOpencodeHostTransport(ctx: {
@@ -313,6 +337,10 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
   });
 
   return {
+    config: async (cfg) => {
+      applyStructuredOutputAgentConfig(cfg);
+    },
+
     "chat.message": async (input, output) => {
       if (!isConfigured() || !CONFIG.chatMessage.enabled) return;
 
@@ -325,7 +353,10 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
         const userMessage = textParts.map((p) => p.text).join("\n");
         if (!userMessage.trim()) return;
 
-        if (isStructuredSummaryPromptMessage(userMessage)) {
+        if (
+          isStructuredSummaryPromptMessage(userMessage) ||
+          isInternalStructuredSession(input.sessionID)
+        ) {
           return;
         }
 

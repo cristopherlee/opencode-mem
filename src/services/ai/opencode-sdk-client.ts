@@ -50,6 +50,10 @@ export function createLazyV2Client(baseUrl: string, transport?: HostTransport): 
         const client = await getSdkClient();
         return client.session.delete(...args);
       },
+      abort: async (...args: Parameters<OpencodeClient["session"]["abort"]>) => {
+        const client = await getSdkClient();
+        return client.session.abort(...args);
+      },
     },
   } as OpencodeClient;
 }
