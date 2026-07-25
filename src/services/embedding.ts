@@ -1,6 +1,10 @@
 import { CONFIG } from "../config.js";
 import { log } from "./logger.js";
 import { join } from "node:path";
+import {
+  formatMissingOnnxruntimeBindingError,
+  prepareOnnxruntimeForTransformers,
+} from "./onnxruntime-resolve.js";
 
 const TIMEOUT_MS = 30000;
 const GLOBAL_EMBEDDING_KEY = Symbol.for("opencode-mem.embedding.instance");
@@ -20,8 +24,22 @@ function getTransformersPackageSpecifier(): string {
   return ["@huggingface", "transformers"].join("/");
 }
 
+function rewriteOnnxruntimeInitError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes("onnxruntime_binding.node") ||
+    message.includes("onnxruntime-node") ||
+    /napi-v6\/[^/]+\/[^/]+/.test(message)
+  ) {
+    return new Error(formatMissingOnnxruntimeBindingError(), { cause: error });
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
 async function ensureTransformersLoaded(): Promise<NonNullable<typeof _transformers>> {
   if (_transformers !== null) return _transformers;
+  // Pin onnxruntime-node to our direct dep before transformers resolves it (#184).
+  prepareOnnxruntimeForTransformers();
   const mod = (await import(getTransformersPackageSpecifier())) as HfTransformers;
   mod.env.allowLocalModels = true;
   mod.env.allowRemoteModels = true;
@@ -47,6 +65,8 @@ export class EmbeddingService {
   private pipe: any = null;
   private initPromise: Promise<void> | null = null;
   public isWarmedUp: boolean = false;
+  /** Set when warmup fails permanently; prevents "initializing forever" (#184). */
+  public initError: string | null = null;
   private cache: Map<string, Float32Array> = new Map();
   private cachedModelName: string | null = null;
 
@@ -59,6 +79,7 @@ export class EmbeddingService {
 
   async warmup(progressCallback?: (progress: any) => void): Promise<void> {
     if (this.isWarmedUp) return;
+    if (this.initError) throw new Error(this.initError);
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.initializeModel(progressCallback);
     return this.initPromise;
@@ -91,6 +112,7 @@ export class EmbeddingService {
         }
 
         this.isWarmedUp = true;
+        this.initError = null;
         return;
       }
 
@@ -100,11 +122,14 @@ export class EmbeddingService {
         progress_callback: progressCallback,
       });
       this.isWarmedUp = true;
+      this.initError = null;
       log("Embedding model warmed up", { model: CONFIG.embeddingModel });
     } catch (error) {
+      const rewritten = rewriteOnnxruntimeInitError(error);
       this.initPromise = null;
-      log("Failed to initialize embedding model", { error: String(error) });
-      throw error;
+      this.initError = rewritten.message;
+      log("Failed to initialize embedding model", { error: rewritten.message });
+      throw rewritten;
     }
   }
 

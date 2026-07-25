@@ -11,6 +11,7 @@
         "@opencode-ai/sdk": "^1.18.4",
         "franc-min": "^6.2.0",
         "iso-639-3": "^3.0.1",
+        "onnxruntime-node": "1.22.0",
         "zod": "^4.4.3",
       },
       "devDependencies": {
