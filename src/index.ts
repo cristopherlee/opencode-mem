@@ -20,12 +20,39 @@ import type { MemoryScope } from "./services/client.js";
 import { getHostClientConfig } from "./services/ai/opencode-host-config.js";
 import { loadOpencodeProvider } from "./services/ai/opencode-provider-loader.js";
 
+/** Title used for transient structured-output sessions (capture / profile learning). */
+export const INTERNAL_CAPTURE_SESSION_TITLE = "opencode-mem capture";
+
 export function isStructuredSummaryPromptMessage(userMessage: string): boolean {
-  // This is the plugin's own structured-summary request. OpenCode echoes it
-  // through chat.message like a normal user message, but capturing it would
-  // create self-referential memories about the memory prompt instead of the
-  // user's conversation.
+  // This is the plugin's own structured-summary or profile-analysis request.
+  // OpenCode echoes it through chat.message like a normal user message, but
+  // capturing it would create self-referential memories / an infinite learning loop.
+  if (userMessage.includes("# User Profile Analysis")) {
+    return true;
+  }
   return userMessage.includes("Analyze this conversation.") && userMessage.includes('type="skip"');
+}
+
+export function isInternalCaptureSessionTitle(title: string | undefined | null): boolean {
+  return title === INTERNAL_CAPTURE_SESSION_TITLE;
+}
+
+async function isInternalCaptureSession(client: unknown, sessionID: string): Promise<boolean> {
+  const sessionGet = (client as { session?: { get?: (args: unknown) => Promise<unknown> } })
+    ?.session?.get;
+  if (typeof sessionGet !== "function") {
+    return false;
+  }
+  try {
+    const response = (await sessionGet({
+      sessionID,
+      path: { id: sessionID },
+    })) as { data?: { title?: string }; title?: string } | undefined;
+    const title = response?.data?.title ?? response?.title;
+    return isInternalCaptureSessionTitle(title);
+  } catch {
+    return false;
+  }
 }
 
 export async function configureOpencodeHostTransport(ctx: {
@@ -572,6 +599,13 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
         if (!isConfigured() || !CONFIG.autoCaptureEnabled) return;
         const sessionID = event.properties?.sessionID;
         if (!sessionID) return;
+
+        // Transient structured-output sessions must not re-trigger capture/learning
+        // (that self-schedules an unbounded idle → LLM → idle loop).
+        if (await isInternalCaptureSession(ctx.client, sessionID)) {
+          log("Skipping idle processing for internal capture session", { sessionID });
+          return;
+        }
 
         if (idleTimeout) clearTimeout(idleTimeout);
 

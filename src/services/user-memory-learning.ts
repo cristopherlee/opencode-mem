@@ -196,10 +196,13 @@ Rules:
       }
 
       if (!success) {
+        // Mark the batch anyway so the same prompts are not retried forever
+        // (token burn + repeated toasts on every subsequent idle).
         log("User profile update conflict: exhausted retries", {
           profileId: existingProfile?.id,
           userId,
         });
+        userPromptManager.markMultipleAsUserLearningCaptured(prompts.map((p) => p.id));
         return;
       }
 
@@ -221,7 +224,7 @@ Rules:
         .showToast({
           body: {
             title: "User Profile Updated",
-            message: `Analyzed ${prompts.length} prompts and updated your profile`,
+            message: `Analyzed ${prompts.length} of ${count} pending prompts and updated your profile`,
             variant: "success",
             duration: 3000,
           },
