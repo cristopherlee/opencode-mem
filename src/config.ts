@@ -235,6 +235,8 @@ const CONFIG_TEMPLATE = `{
   // ============================================
   // Embedding Model (for similarity search)
   // ============================================
+  // Local = Hugging Face / ONNX via @huggingface/transformers (not Apple MLX).
+  // Remote = set BOTH embeddingApiUrl and embeddingApiKey (OpenAI-compatible /embeddings).
   
   // Default: Nomic Embed v1 (768 dimensions, 8192 context, multilingual)
   "embeddingModel": "Xenova/nomic-embed-text-v1",
@@ -242,17 +244,17 @@ const CONFIG_TEMPLATE = `{
   // Auto-detected dimensions (no need to set manually)
   // "embeddingDimensions": 768,
   
-  // Other recommended models:
+  // Other recommended local models:
   // "embeddingModel": "Xenova/jina-embeddings-v2-base-en",  // 768 dims, English-only, 8192 context
   // "embeddingModel": "Xenova/jina-embeddings-v2-small-en", // 512 dims, faster, 8192 context
   // "embeddingModel": "Xenova/all-MiniLM-L6-v2",            // 384 dims, very fast, 512 context
   // "embeddingModel": "Xenova/all-mpnet-base-v2",           // 768 dims, good quality, 512 context
   
-  // Optional: Use OpenAI-compatible API for embeddings
+  // Optional: OpenAI-compatible API for embeddings (both URL and key required)
   // "embeddingApiUrl": "https://api.openai.com/v1",
-  // "embeddingApiKey": "sk-...",
+  // "embeddingApiKey": "env://OPENAI_API_KEY",  // or "sk-..." / "file:///path/to/key"
   // "embeddingModel": "text-embedding-3-small",  // 1536 dims, auto-detected
-  
+ 
   // ============================================
   // Web Server Settings
   // ============================================

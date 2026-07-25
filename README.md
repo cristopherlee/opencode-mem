@@ -120,6 +120,45 @@ The plugin creates a full commented template at this path on first startup. This
 }
 ```
 
+### Choosing / configuring embeddings
+
+Embeddings power similarity search for memories and the user profile. Configure them in the same file (`~/.config/opencode/opencode-mem.jsonc`). There is **no MLX backend** — local embeddings use `@huggingface/transformers` with ONNX, not Apple MLX.
+
+**Local (default):** set only `embeddingModel`. On first use the model is downloaded from Hugging Face and cached under `{storagePath}/.cache` (default `~/.opencode-mem/data/.cache`).
+
+**Remote (OpenAI-compatible):** set both `embeddingApiUrl` and `embeddingApiKey`. The plugin then calls `{embeddingApiUrl}/embeddings` with a Bearer token. `embeddingApiKey` accepts the same secret formats as `memoryApiKey` (`literal`, `env://…`, `file://…`).
+
+| Key                   | Role                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| `embeddingModel`      | Hugging Face id (local) or API model name (remote). Default: `Xenova/nomic-embed-text-v1` |
+| `embeddingDimensions` | Optional override; usually omit — dimensions are looked up from a built-in map            |
+| `embeddingApiUrl`     | Base URL for an OpenAI-compatible embeddings API (no trailing path beyond `/v1`)          |
+| `embeddingApiKey`     | API key for that endpoint (required together with `embeddingApiUrl`)                      |
+
+Recommended local models:
+
+| Model                                | Dims | Notes                               |
+| ------------------------------------ | ---- | ----------------------------------- |
+| `Xenova/nomic-embed-text-v1`         | 768  | Default; multilingual, 8192 context |
+| `Xenova/jina-embeddings-v2-base-en`  | 768  | English-only, 8192 context          |
+| `Xenova/jina-embeddings-v2-small-en` | 512  | Faster, 8192 context                |
+| `Xenova/all-MiniLM-L6-v2`            | 384  | Very fast, 512 context              |
+| `Xenova/all-mpnet-base-v2`           | 768  | Good quality, 512 context           |
+
+Example — remote OpenAI embeddings:
+
+```jsonc
+{
+  "embeddingApiUrl": "https://api.openai.com/v1",
+  "embeddingApiKey": "env://OPENAI_API_KEY",
+  "embeddingModel": "text-embedding-3-small",
+}
+```
+
+Changing `embeddingModel` (or dimensions) can trigger re-embedding of stored memories on next startup. Prefer picking a model once and sticking with it for a given data directory.
+
+**Intel Mac (`darwin/x64`):** newer `onnxruntime-node` builds may ship without an x64 native binding, so local embedding init can fail. Use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above). If you stay on local embeddings after a plugin upgrade, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) so the install picks up the pinned runtime.
+
 ### Memory Scope
 
 - `scope: "project"`: query only the current project. This is the default.
@@ -239,6 +278,7 @@ Troubleshooting:
 - If auto-capture reports that a provider is not connected, confirm the provider name with `opencode providers list` and configure that provider in opencode first.
 - If a proxy or custom provider returns plain text instead of structured/tool output, choose another model/provider or use one of the manual provider modes above.
 - For models that reject `temperature`, add `"memoryTemperature": false` when using manual API configuration.
+- **Intel Mac (darwin/x64) local embedding:** if embedding init fails (missing onnxruntime x64 binding), switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`, or clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node`. See [Choosing / configuring embeddings](#choosing--configuring-embeddings). MLX is not supported.
 
 ## Public Subpath Exports
 
