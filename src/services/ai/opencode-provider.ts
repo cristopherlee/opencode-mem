@@ -16,6 +16,9 @@
  * older SDK builds that do not expose the v2 session methods.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { z } from "zod";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import {
@@ -76,14 +79,69 @@ export interface StructuredOutputOptions<T> {
 }
 
 /**
+ * Resolve `opencodeModel: "inherit"` to a concrete provider/model.
+ *
+ * Prefer an explicit prompt-recorded model (auto-capture path). Otherwise fall
+ * back to OpenCode's recent model list so profile-learning / conflict / dedup
+ * paths don't send the literal model id "inherit" (ProviderModelNotFoundError).
+ */
+export function resolveOpencodeModelRef(opts: {
+  providerID: string;
+  modelID: string;
+  prompt?: { providerId?: string | null; modelId?: string | null };
+}): { providerID: string; modelID: string } {
+  if (opts.modelID !== "inherit") {
+    return { providerID: opts.providerID, modelID: opts.modelID };
+  }
+
+  if (opts.prompt?.providerId && opts.prompt?.modelId) {
+    return { providerID: opts.prompt.providerId, modelID: opts.prompt.modelId };
+  }
+
+  const recent = readRecentOpencodeModel(opts.providerID);
+  if (recent) return recent;
+
+  throw new Error(
+    "opencode-mem: opencodeModel is 'inherit' but no session model was recorded and no recent OpenCode model is available"
+  );
+}
+
+function readRecentOpencodeModel(
+  preferredProvider?: string
+): { providerID: string; modelID: string } | undefined {
+  try {
+    // OpenCode state path mirrors `opencode debug paths` → state.
+    const stateDir = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+    const modelPath = join(stateDir, "opencode", "model.json");
+    if (!existsSync(modelPath)) return undefined;
+    const raw = JSON.parse(readFileSync(modelPath, "utf8")) as {
+      recent?: Array<{ providerID?: string; modelID?: string }>;
+    };
+    const recent = Array.isArray(raw.recent) ? raw.recent : [];
+    const match =
+      (preferredProvider
+        ? recent.find((r) => r.providerID === preferredProvider && r.modelID)
+        : undefined) ?? recent.find((r) => r.providerID && r.modelID);
+    if (!match?.providerID || !match.modelID) return undefined;
+    return { providerID: match.providerID, modelID: match.modelID };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Generate one structured-output completion via opencode's HTTP API.
  * Throws on: session.create failure, prompt failure, AssistantMessage.error
  * (StructuredOutputError / ApiError / ...), missing `info.structured`,
  * or final Zod validation failure.
  */
 export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<T>): Promise<T> {
-  const { client, providerID, modelID, systemPrompt, userPrompt, schema, directory, retryCount } =
-    opts;
+  const resolved = resolveOpencodeModelRef({
+    providerID: opts.providerID,
+    modelID: opts.modelID,
+  });
+  const { client, systemPrompt, userPrompt, schema, directory, retryCount } = opts;
+  const { providerID, modelID } = resolved;
 
   const jsonSchema =
     (
