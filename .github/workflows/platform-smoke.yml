@@ -43,11 +43,11 @@ jobs:
       - name: Typecheck source
         run: bun run typecheck
 
-      - name: Run test suite
-        run: bun test
-
       - name: Build package artifacts
         run: bun run build
+
+      - name: Run test suite
+        run: bun test
 
       - name: Pack and install published package shape
         shell: bash
