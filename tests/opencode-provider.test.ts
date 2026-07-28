@@ -774,3 +774,137 @@ describe("generateStructuredOutput regression tests (issue #110)", () => {
     expect(typeof mod.createV2Client).toBe("function");
   });
 });
+
+describe("resolveOpencodeModelRef / inherit", () => {
+  const originalStateHome = process.env.XDG_STATE_HOME;
+  let tempRoot: string | undefined;
+
+  beforeEach(async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    tempRoot = mkdtempSync(join(tmpdir(), "opencode-mem-inherit-"));
+    process.env.XDG_STATE_HOME = tempRoot;
+  });
+
+  afterEach(async () => {
+    if (originalStateHome === undefined) {
+      delete process.env.XDG_STATE_HOME;
+    } else {
+      process.env.XDG_STATE_HOME = originalStateHome;
+    }
+    if (tempRoot) {
+      const { rmSync } = await import("node:fs");
+      rmSync(tempRoot, { recursive: true, force: true });
+      tempRoot = undefined;
+    }
+  });
+
+  it("passes concrete model ids through unchanged", async () => {
+    const { resolveOpencodeModelRef } = await import("../src/services/ai/opencode-provider.js");
+    expect(resolveOpencodeModelRef({ providerID: "local", modelID: "h100/qwen:latest" })).toEqual({
+      providerID: "local",
+      modelID: "h100/qwen:latest",
+    });
+  });
+
+  it("prefers the recorded prompt model when modelID is inherit", async () => {
+    const { resolveOpencodeModelRef } = await import("../src/services/ai/opencode-provider.js");
+    expect(
+      resolveOpencodeModelRef({
+        providerID: "local",
+        modelID: "inherit",
+        prompt: { providerId: "anthropic", modelId: "claude-haiku-4-5-20251001" },
+      })
+    ).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-haiku-4-5-20251001",
+    });
+  });
+
+  it("falls back to OpenCode recent model.json when inherit has no prompt model", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const stateDir = join(tempRoot!, "opencode");
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, "model.json"),
+      JSON.stringify({
+        recent: [
+          { providerID: "openai", modelID: "gpt-4o-mini" },
+          { providerID: "local", modelID: "h100/qwen:latest" },
+        ],
+      })
+    );
+
+    const { resolveOpencodeModelRef } = await import("../src/services/ai/opencode-provider.js");
+    expect(resolveOpencodeModelRef({ providerID: "local", modelID: "inherit" })).toEqual({
+      providerID: "local",
+      modelID: "h100/qwen:latest",
+    });
+  });
+
+  it("throws a clear error when inherit has no prompt model and no recent list", async () => {
+    const { resolveOpencodeModelRef } = await import("../src/services/ai/opencode-provider.js");
+    expect(() => resolveOpencodeModelRef({ providerID: "local", modelID: "inherit" })).toThrow(
+      /no session model was recorded and no recent OpenCode model is available/
+    );
+  });
+
+  it("expands inherit before POST /session/{id}/message so OpenCode never sees modelID=inherit", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const stateDir = join(tempRoot!, "opencode");
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, "model.json"),
+      JSON.stringify({
+        recent: [{ providerID: "local", modelID: "h100/qwen:latest" }],
+      })
+    );
+
+    const mock = installFetchMock((call) => {
+      if (
+        call.method === "POST" &&
+        call.url.includes("/session") &&
+        !call.url.includes("/message")
+      ) {
+        return { body: { id: "ses_inherit" } };
+      }
+      if (call.method === "POST" && call.url.includes("/session/ses_inherit/message")) {
+        return {
+          body: {
+            info: {
+              structured: { topic: "ok", count: 1 },
+            },
+          },
+        };
+      }
+      if (call.method === "DELETE") {
+        return { body: true };
+      }
+      throw new Error(`unexpected fetch: ${call.method} ${call.url}`);
+    });
+
+    try {
+      const client = createV2Client("http://127.0.0.1:9999");
+      const result = await generateStructuredOutput({
+        client,
+        providerID: "local",
+        modelID: "inherit",
+        systemPrompt: "s",
+        userPrompt: "u",
+        schema,
+      });
+      expect(result).toEqual({ topic: "ok", count: 1 });
+
+      const promptCall = mock.calls.find((c) => c.method === "POST" && c.url.includes("/message"));
+      expect(promptCall?.body).toMatchObject({
+        model: { providerID: "local", modelID: "h100/qwen:latest" },
+      });
+      expect(JSON.stringify(promptCall?.body)).not.toContain('"inherit"');
+    } finally {
+      mock.restore();
+    }
+  });
+});
