@@ -328,7 +328,7 @@ async function migrateMemoryShard(dbPath: string): Promise<ShardMigrationSidecar
     return readSidecar(dbPath);
   }
 
-  const db = await tursoConnectionManager.getConnection(dbPath);
+  let db: TursoDb | null = await tursoConnectionManager.getConnection(dbPath);
   const hasTable = await hasMemoriesTable(db);
 
   if (!hasTable) {
@@ -420,6 +420,7 @@ async function migrateMemoryShard(dbPath: string): Promise<ShardMigrationSidecar
   });
 
   const backup = backupPath(dbPath);
+  db = null;
   await tursoConnectionManager.closeConnection(dbPath);
   if (existsSync(dbPath)) {
     await withSqliteFileLockRetry(() => renameSync(dbPath, backup));
