@@ -3,15 +3,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve, relative, isAbsolute, sep } from "node:path";
 import { CONFIG } from "../../config.js";
 import { log } from "../logger.js";
+import { collectReleasedSqliteHandles } from "./sqlite-handle-release.js";
 import { TursoDb } from "./turso-db.js";
-
-const WINDOWS_FILE_HANDLE_SETTLE_MS = 100;
-
-async function waitForWindowsFileHandleRelease(): Promise<void> {
-  if (process.platform === "win32") {
-    await new Promise<void>((resolve) => setTimeout(resolve, WINDOWS_FILE_HANDLE_SETTLE_MS));
-  }
-}
 
 function toFileUrl(dbPath: string): string {
   return dbPath.startsWith("file:") ? dbPath : `file:${dbPath}`;
@@ -94,7 +87,7 @@ export class TursoConnectionManager {
       this.connections.delete(dbPath);
     }
 
-    await waitForWindowsFileHandleRelease();
+    await collectReleasedSqliteHandles();
   }
 
   async closeAll(): Promise<void> {
@@ -111,7 +104,7 @@ export class TursoConnectionManager {
       }
       this.connections.clear();
       this.pending.clear();
-      await waitForWindowsFileHandleRelease();
+      await collectReleasedSqliteHandles();
     })();
 
     try {
