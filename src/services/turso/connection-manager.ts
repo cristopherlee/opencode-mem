@@ -5,6 +5,14 @@ import { CONFIG } from "../../config.js";
 import { log } from "../logger.js";
 import { TursoDb } from "./turso-db.js";
 
+const WINDOWS_FILE_HANDLE_SETTLE_MS = 100;
+
+async function waitForWindowsFileHandleRelease(): Promise<void> {
+  if (process.platform === "win32") {
+    await new Promise<void>((resolve) => setTimeout(resolve, WINDOWS_FILE_HANDLE_SETTLE_MS));
+  }
+}
+
 function toFileUrl(dbPath: string): string {
   return dbPath.startsWith("file:") ? dbPath : `file:${dbPath}`;
 }
@@ -76,15 +84,17 @@ export class TursoConnectionManager {
 
   async closeConnection(dbPath: string): Promise<void> {
     const db = this.connections.get(dbPath);
-    if (!db) return;
+    if (db) {
+      try {
+        await db.close();
+      } catch (error) {
+        log("Error closing Turso database", { path: dbPath, error: String(error) });
+      }
 
-    try {
-      await db.close();
-    } catch (error) {
-      log("Error closing Turso database", { path: dbPath, error: String(error) });
+      this.connections.delete(dbPath);
     }
 
-    this.connections.delete(dbPath);
+    await waitForWindowsFileHandleRelease();
   }
 
   async closeAll(): Promise<void> {
@@ -101,6 +111,7 @@ export class TursoConnectionManager {
       }
       this.connections.clear();
       this.pending.clear();
+      await waitForWindowsFileHandleRelease();
     })();
 
     try {
