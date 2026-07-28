@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { join, dirname, extname, normalize } from "node:path";
+import { join, dirname, extname, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
 import { corsPreflightResponse, disallowedCorsResponse, isAllowedBrowserOrigin } from "./cors.js";
@@ -636,9 +636,20 @@ export class WebServer {
 
   private serveStaticFile(filename: string, contentType: string): Response {
     try {
-      const webDir = join(__dirname, "..", "web");
+      const webDir = [
+        join(__dirname, "..", "web"),
+        join(__dirname, "..", "..", "dist", "web"),
+      ].find((candidate) => existsSync(candidate));
+      if (!webDir) {
+        return new Response("File not found", { status: 404 });
+      }
+
       const filePath = normalize(join(webDir, filename));
-      if (!filePath.startsWith(normalize(webDir)) || !existsSync(filePath)) {
+      const normalizedWebDir = normalize(webDir);
+      if (filePath !== normalizedWebDir && !filePath.startsWith(`${normalizedWebDir}${sep}`)) {
+        return new Response("File not found", { status: 404 });
+      }
+      if (!existsSync(filePath)) {
         return new Response("File not found", { status: 404 });
       }
 
