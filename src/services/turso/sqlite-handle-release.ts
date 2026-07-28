@@ -6,7 +6,7 @@ type RuntimeWithGarbageCollector = typeof globalThis & {
 };
 
 const GC_PASSES = 3;
-const FILE_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 400, 800];
+const FILE_LOCK_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 1600, 3200];
 const RETRYABLE_FILE_LOCK_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
 
 function delay(ms: number): Promise<void> {
