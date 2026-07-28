@@ -1,4 +1,5 @@
-import { describe, expect, it, afterEach, spyOn } from "bun:test";
+import { describe, expect, it, afterEach } from "bun:test";
+import type { Client } from "@libsql/client";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -35,10 +36,6 @@ describe("turso connection manager", () => {
     CONFIG.storagePath = baseDir;
     const dbPath = join(baseDir, "close-race.db");
 
-    const { TursoConnectionManager } = await import("../src/services/turso/connection-manager.js");
-    const { TursoDb } = await import("../src/services/turso/turso-db.js");
-    const manager = new TursoConnectionManager();
-    const originalExecute = TursoDb.prototype.execute;
     let releaseOpen!: () => void;
     let markOpenStarted!: () => void;
     const openGate = new Promise<void>((resolve) => {
@@ -47,17 +44,31 @@ describe("turso connection manager", () => {
     const openStarted = new Promise<void>((resolve) => {
       markOpenStarted = resolve;
     });
-    let gateFirstOpen = true;
-    const executeSpy = spyOn(TursoDb.prototype, "execute").mockImplementation(
-      async function (sql, args) {
-        if (gateFirstOpen && sql === "PRAGMA foreign_keys = ON") {
-          gateFirstOpen = false;
-          markOpenStarted();
-          await openGate;
-        }
-        return originalExecute.call(this, sql, args);
-      }
-    );
+    const clientStates: Array<{ closed: boolean }> = [];
+    const clientFactory = (): Client => {
+      const clientIndex = clientStates.length;
+      const state = { closed: false };
+      clientStates.push(state);
+      return {
+        async execute(statement: { sql: string }) {
+          if (clientIndex === 0 && statement.sql === "PRAGMA foreign_keys = ON") {
+            markOpenStarted();
+            await openGate;
+          }
+          return {
+            columns: statement.sql === "PRAGMA foreign_keys" ? ["foreign_keys"] : [],
+            columnTypes: [],
+            rows: statement.sql === "PRAGMA foreign_keys" ? [{ foreign_keys: 1 }] : [],
+            rowsAffected: 0,
+          };
+        },
+        close() {
+          state.closed = true;
+        },
+      } as unknown as Client;
+    };
+    const { TursoConnectionManager } = await import("../src/services/turso/connection-manager.js");
+    const manager = new TursoConnectionManager(clientFactory);
 
     try {
       const opening = manager.getConnection(dbPath);
@@ -78,12 +89,13 @@ describe("turso connection manager", () => {
       const reopened = await reopening;
 
       expect(reopened).not.toBe(opened);
+      expect(clientStates).toHaveLength(2);
+      expect(clientStates[0]?.closed).toBeTrue();
       const row = await reopened.get(`PRAGMA foreign_keys`);
       expect(Number((row as { foreign_keys?: number } | null)?.foreign_keys)).toBe(1);
     } finally {
       releaseOpen();
       await manager.closeAll();
-      executeSpy.mockRestore();
     }
   });
 

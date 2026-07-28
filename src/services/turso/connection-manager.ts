@@ -26,6 +26,8 @@ export class TursoConnectionManager {
   private readonly closingConnections = new Map<string, Promise<void>>();
   private closingPromise: Promise<void> | null = null;
 
+  constructor(private readonly clientFactory: typeof createClient = createClient) {}
+
   async getConnection(dbPath: string): Promise<TursoDb> {
     if (this.closingPromise) {
       await this.closingPromise;
@@ -52,7 +54,7 @@ export class TursoConnectionManager {
         mkdirSync(dir, { recursive: true });
       }
 
-      const client: Client = createClient({ url: toFileUrl(dbPath) });
+      const client: Client = this.clientFactory({ url: toFileUrl(dbPath) });
       try {
         const db = new TursoDb(client);
         await db.execute("PRAGMA foreign_keys = ON");
