@@ -1,5 +1,21 @@
 const API_BASE = "";
 
+function resolveApiToken() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("apiToken") || params.get("token");
+    if (fromQuery) {
+      sessionStorage.setItem("opencode-mem-api-token", fromQuery);
+      return fromQuery;
+    }
+    return sessionStorage.getItem("opencode-mem-api-token") || "";
+  } catch {
+    return "";
+  }
+}
+
+const API_TOKEN = resolveApiToken();
+
 const state = {
   tags: { project: [] },
   memories: [],
@@ -37,12 +53,17 @@ async function fetchAPI(endpoint, options = {}) {
       (options.method === "POST" && endpoint.includes("/ai-cleanup") ? 300000 : 60000);
     const { timeout: _, headers: extraHeaders, ...fetchOptions } = options;
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const headers = new Headers(extraHeaders || {});
+    if (API_TOKEN) {
+      headers.set("Authorization", `Bearer ${API_TOKEN}`);
+      headers.set("X-Opencode-Mem-Token", API_TOKEN);
+    }
+    if (window.__OPENCODE_MEM_TOKEN__) {
+      headers.set("X-Opencode-Mem-Token", window.__OPENCODE_MEM_TOKEN__);
+    }
     const response = await fetch(API_BASE + endpoint, {
       ...fetchOptions,
-      headers: {
-        ...extraHeaders,
-        "x-opencode-mem-token": window.__OPENCODE_MEM_TOKEN__ || "",
-      },
+      headers,
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -844,7 +865,7 @@ async function runMigration(strategy) {
 
   if (
     !confirm(
-      `Run ${strategyName} migration?\n\nThis operation is IRREVERSIBLE and will:\n${strategy === "fresh-start" ? "- DELETE all existing memories\n- Remove all shards" : "- Re-embed all memories with new model\n- This may take several minutes"}\n\nContinue?`
+      `Run ${strategyName} migration?\n\n${strategy === "fresh-start" ? "- Remove all existing memories from the active store\n- Archive old shards as .fresh-start-*.bak files" : "- Re-embed all memories with the new model\n- Stage and verify replacement shards before swapping\n- Keep previous shards as .pre-reembed-*.bak files\n- This may take several minutes"}\n\nContinue?`
     )
   ) {
     return;
@@ -1843,7 +1864,7 @@ async function checkAuthWarning() {
       const data = await response.json();
       authEnabled = data && data.authEnabled === true;
     }
-  } catch (error) {
+  } catch {
     // If the probe fails the warning is moot — the UI is unusable anyway.
     return;
   }
@@ -1993,7 +2014,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadMemories();
   await loadStats();
   await checkMigrationStatus();
-  checkAuthWarning();
+  await checkAuthWarning();
 
   startAutoRefresh();
 

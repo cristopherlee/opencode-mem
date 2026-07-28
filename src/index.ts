@@ -10,6 +10,8 @@ import { performAutoCapture } from "./services/auto-capture.js";
 import { performUserProfileLearning } from "./services/user-memory-learning.js";
 import { userPromptManager } from "./services/user-prompt/user-prompt-manager.js";
 import { startWebServer, WebServer } from "./services/web-server.js";
+import { ensureTursoReady } from "./services/turso/ready.js";
+import { tursoConnectionManager } from "./services/turso/connection-manager.js";
 import { WebAuth } from "./services/web-auth.js";
 
 import { isConfigured, CONFIG, initConfig } from "./config.js";
@@ -129,7 +131,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
   logAutoCaptureProviderStatus();
   const tags = getTags(directory);
   let webServer: WebServer | null = null;
-  let idleTimeout: Timer | null = null;
+  let idleTimeout: ReturnType<typeof setTimeout> | null = null;
 
   if (!isConfigured()) {
   }
@@ -137,15 +139,13 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
   const GLOBAL_PLUGIN_WARMUP_KEY = Symbol.for("opencode-mem.plugin.warmedup");
 
   if (!(globalThis as any)[GLOBAL_PLUGIN_WARMUP_KEY] && isConfigured()) {
-    // Fire-and-forget: warmup is slow (embedding model load + index rebuild).
-    // Awaiting it here serializes opencode's plugin loader and starves the TUI,
-    // which gave the symptom "opencode hangs ~70s then disconnects on startup".
+    // Fire-and-forget: DB ready + embedding model must not block plugin init.
     (async () => {
       try {
         await memoryClient.warmup();
         (globalThis as any)[GLOBAL_PLUGIN_WARMUP_KEY] = true;
       } catch (error) {
-        log("Plugin warmup failed", { error: String(error) });
+        log("Plugin memory warmup failed", { error: String(error) });
       }
     })();
   }
@@ -172,7 +172,29 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
     }
   })();
 
-  if (CONFIG.webServerEnabled) {
+  let tursoReadyForWeb = !isConfigured();
+  if (CONFIG.webServerEnabled && isConfigured()) {
+    try {
+      await ensureTursoReady();
+      tursoReadyForWeb = true;
+    } catch (error) {
+      log("Turso ready gate failed before web server start", { error: String(error) });
+      if (ctx.client?.tui) {
+        ctx.client.tui
+          .showToast({
+            body: {
+              title: "Memory Explorer",
+              message: "Database migration failed; web UI not started",
+              variant: "error",
+              duration: 8000,
+            },
+          })
+          .catch(() => {});
+      }
+    }
+  }
+
+  if (CONFIG.webServerEnabled && tursoReadyForWeb) {
     const webAuth = new WebAuth({
       password: CONFIG.webServerAuthPassword,
       username: CONFIG.webServerAuthUsername,
@@ -182,6 +204,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
       host: CONFIG.webServerHost,
       enabled: CONFIG.webServerEnabled,
       auth: webAuth,
+      apiToken: CONFIG.webServerApiToken,
     })
       .then((server) => {
         webServer = server;
@@ -250,13 +273,16 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
       });
   }
 
+  let cleanedUp = false;
   const cleanupPlugin = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     if (idleTimeout) {
       clearTimeout(idleTimeout);
       idleTimeout = null;
     }
     if (webServer) await webServer.stop();
-    if (memoryClient) memoryClient.close();
+    if (memoryClient) await memoryClient.close();
   };
 
   const shutdownHandler = async () => {
@@ -270,9 +296,20 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
 
   process.on("SIGINT", shutdownHandler);
   process.on("SIGTERM", shutdownHandler);
+  process.on("beforeExit", () => {
+    if (!cleanedUp) {
+      void cleanupPlugin();
+    }
+  });
   process.on("exit", () => {
-    if (webServer) webServer.stop().catch(() => {});
-    if (memoryClient) memoryClient.close();
+    // Best-effort sync close when the host exits without SIGINT/SIGTERM.
+    if (!cleanedUp) {
+      try {
+        tursoConnectionManager.closeAllSync();
+      } catch {
+        // ignore — module may already be torn down
+      }
+    }
   });
 
   return {
@@ -292,7 +329,12 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
           return;
         }
 
-        userPromptManager.savePrompt(input.sessionID, output.message.id, directory, userMessage);
+        await userPromptManager.savePrompt(
+          input.sessionID,
+          output.message.id,
+          directory,
+          userMessage
+        );
 
         const messagesResponse = await ctx.client.session.messages({
           path: { id: input.sessionID },
@@ -348,7 +390,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
         };
 
         const userId = tags.user.userEmail || null;
-        const memoryContext = formatContextForPrompt(userId, projectMemories);
+        const memoryContext = await formatContextForPrompt(userId, projectMemories);
 
         if (memoryContext) {
           const contextPart: Part = {
@@ -382,7 +424,11 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
       if (!isConfigured() || CONFIG.opencodeModel !== "inherit") return;
 
       try {
-        userPromptManager.setPromptModel(input.message.id, input.model.providerID, input.model.id);
+        await userPromptManager.setPromptModel(
+          input.message.id,
+          input.model.providerID,
+          input.model.id
+        );
       } catch (error) {
         log("chat.params: ERROR", { error: String(error) });
       }
@@ -418,9 +464,14 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
             });
           }
 
-          const needsWarmup = !(await memoryClient.isReady());
-          if (needsWarmup) {
-            return JSON.stringify({ success: false, error: "Memory system is initializing." });
+          try {
+            await memoryClient.warmup();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return JSON.stringify({
+              success: false,
+              error: `Memory system failed to initialize: ${message}`,
+            });
           }
 
           const mode = args.mode || "help";
@@ -477,8 +528,8 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                 });
                 return JSON.stringify({
                   success: result.success,
-                  message: `Memory added`,
-                  id: result.id,
+                  message: result.success ? `Memory added` : result.error,
+                  id: result.success ? result.id : undefined,
                   tags: parsedTags,
                 });
 
@@ -539,7 +590,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                     lastSeen: Date.now(),
                   };
 
-                  const existingProfile = userProfileManager.getActiveProfile(userId);
+                  const existingProfile = await userProfileManager.getActiveProfile(userId);
 
                   if (existingProfile) {
                     const existingData = JSON.parse(existingProfile.profileData);
@@ -551,7 +602,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                       undefined,
                       existingProfile.id
                     );
-                    userProfileManager.updateProfile(
+                    await userProfileManager.updateProfile(
                       existingProfile.id,
                       mergedData,
                       0,
@@ -562,7 +613,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                       message: "Preference saved to profile",
                     });
                   } else {
-                    userProfileManager.createProfile(
+                    await userProfileManager.createProfile(
                       userId,
                       tags.user.displayName || userId,
                       tags.user.userName || userId,
@@ -578,7 +629,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                 }
 
                 // --- READ: no content provided ---
-                const profile = userProfileManager.getActiveProfile(userId);
+                const profile = await userProfileManager.getActiveProfile(userId);
                 if (!profile) return JSON.stringify({ success: true, profile: null });
                 const pData = JSON.parse(profile.profileData);
                 return JSON.stringify({
@@ -649,8 +700,6 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
               await performUserProfileLearning(ctx, directory);
               const { cleanupService } = await import("./services/cleanup-service.js");
               if (await cleanupService.shouldRunCleanup()) await cleanupService.runCleanup();
-              const { connectionManager } = await import("./services/sqlite/connection-manager.js");
-              connectionManager.checkpointAll();
             }
           } catch (error) {
             log("Idle processing error", { error: String(error) });
