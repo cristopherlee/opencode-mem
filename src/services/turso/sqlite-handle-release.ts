@@ -6,6 +6,12 @@ type RuntimeWithGarbageCollector = typeof globalThis & {
 };
 
 const GC_PASSES = 3;
+const FILE_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 400, 800];
+const RETRYABLE_FILE_LOCK_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
+
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * libsql 0.5.x leaves prepared-statement handles alive until garbage collection.
@@ -23,6 +29,32 @@ export async function collectReleasedSqliteHandles(): Promise<void> {
   for (let pass = 0; pass < GC_PASSES; pass += 1) {
     bunGc?.(true);
     globalGc?.();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await delay(0);
+  }
+}
+
+/**
+ * Retries Windows file mutations while stable libsql releases native handles.
+ * Non-lock errors and non-Windows platforms fail immediately.
+ */
+export async function withSqliteFileLockRetry<T>(operation: () => T | Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      const retryDelay = FILE_LOCK_RETRY_DELAYS_MS[attempt];
+      if (
+        process.platform !== "win32" ||
+        !code ||
+        !RETRYABLE_FILE_LOCK_CODES.has(code) ||
+        retryDelay === undefined
+      ) {
+        throw error;
+      }
+
+      await collectReleasedSqliteHandles();
+      await delay(retryDelay);
+    }
   }
 }

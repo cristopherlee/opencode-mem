@@ -5,6 +5,7 @@ import { assertSafeScopeHash } from "../memory-scope.js";
 import { tursoConnectionManager } from "./connection-manager.js";
 import { log } from "../logger.js";
 import { assertNoTursoMigrationInProgress } from "./operation-lock.js";
+import { withSqliteFileLockRetry } from "./sqlite-handle-release.js";
 import type { ShardInfo } from "./types.js";
 import type { TursoDb } from "./turso-db.js";
 
@@ -504,7 +505,7 @@ export class TursoShardManager {
 
     try {
       if (existsSync(fullPath)) {
-        unlinkSync(fullPath);
+        await withSqliteFileLockRetry(() => unlinkSync(fullPath));
       }
     } catch (error) {
       log("Error deleting shard file", {
@@ -526,13 +527,13 @@ export class TursoShardManager {
     const archivePath = `${fullPath}.${reason}-${process.pid}-${Date.now()}.bak`;
 
     if (existsSync(fullPath)) {
-      renameSync(fullPath, archivePath);
+      await withSqliteFileLockRetry(() => renameSync(fullPath, archivePath));
     }
     try {
       await metadataDb.run(`DELETE FROM shards WHERE id = ?`, [shardId]);
     } catch (error) {
       if (existsSync(archivePath) && !existsSync(fullPath)) {
-        renameSync(archivePath, fullPath);
+        await withSqliteFileLockRetry(() => renameSync(archivePath, fullPath));
       }
       throw error;
     }

@@ -9,6 +9,7 @@ import { log } from "./logger.js";
 import { formatTagsForEmbedding } from "./turso/vector-utils.js";
 import type { MemoryRecord, ShardInfo } from "./turso/types.js";
 import { acquireTursoOperationLock } from "./turso/operation-lock.js";
+import { withSqliteFileLockRetry } from "./turso/sqlite-handle-release.js";
 
 export interface DimensionMismatch {
   needsMigration: boolean;
@@ -349,11 +350,11 @@ export class MigrationService {
         "utf-8"
       );
       await tursoConnectionManager.closeConnection(shard.dbPath);
-      renameSync(shard.dbPath, backupPath);
+      await withSqliteFileLockRetry(() => renameSync(shard.dbPath, backupPath));
       try {
-        renameSync(stagedPath, shard.dbPath);
+        await withSqliteFileLockRetry(() => renameSync(stagedPath, shard.dbPath));
       } catch (error) {
-        renameSync(backupPath, shard.dbPath);
+        await withSqliteFileLockRetry(() => renameSync(backupPath, shard.dbPath));
         throw error;
       }
 
@@ -368,7 +369,7 @@ export class MigrationService {
     } catch (error) {
       await tursoConnectionManager.closeConnection(stagedPath);
       if (existsSync(stagedPath)) {
-        unlinkSync(stagedPath);
+        await withSqliteFileLockRetry(() => unlinkSync(stagedPath));
       }
       if (existsSync(swapStatePath) && existsSync(shard.dbPath)) {
         unlinkSync(swapStatePath);
