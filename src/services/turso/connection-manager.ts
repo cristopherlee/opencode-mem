@@ -23,11 +23,16 @@ function assertPathInsideStorage(dbPath: string): void {
 export class TursoConnectionManager {
   private readonly connections = new Map<string, TursoDb>();
   private readonly pending = new Map<string, Promise<TursoDb>>();
+  private readonly closingConnections = new Map<string, Promise<void>>();
   private closingPromise: Promise<void> | null = null;
 
   async getConnection(dbPath: string): Promise<TursoDb> {
     if (this.closingPromise) {
       await this.closingPromise;
+    }
+    const closingConnection = this.closingConnections.get(dbPath);
+    if (closingConnection) {
+      await closingConnection;
     }
     assertPathInsideStorage(dbPath);
 
@@ -76,25 +81,47 @@ export class TursoConnectionManager {
   }
 
   async closeConnection(dbPath: string): Promise<void> {
-    const db = this.connections.get(dbPath);
-    if (db) {
-      try {
-        await db.close();
-      } catch (error) {
-        log("Error closing Turso database", { path: dbPath, error: String(error) });
-      }
-
-      this.connections.delete(dbPath);
+    if (this.closingPromise) {
+      await this.closingPromise;
+    }
+    const existingClose = this.closingConnections.get(dbPath);
+    if (existingClose) {
+      return existingClose;
     }
 
-    await collectReleasedSqliteHandles();
+    const closePromise = Promise.resolve()
+      .then(async () => {
+        const pending = this.pending.get(dbPath);
+        if (pending) {
+          await Promise.allSettled([pending]);
+        }
+
+        const db = this.connections.get(dbPath);
+        if (db) {
+          try {
+            await db.close();
+          } catch (error) {
+            log("Error closing Turso database", { path: dbPath, error: String(error) });
+          }
+
+          this.connections.delete(dbPath);
+        }
+
+        await collectReleasedSqliteHandles();
+      })
+      .finally(() => {
+        this.closingConnections.delete(dbPath);
+      });
+
+    this.closingConnections.set(dbPath, closePromise);
+    return closePromise;
   }
 
   async closeAll(): Promise<void> {
     if (this.closingPromise) return this.closingPromise;
 
     this.closingPromise = (async () => {
-      await Promise.allSettled(this.pending.values());
+      await Promise.allSettled([...this.pending.values(), ...this.closingConnections.values()]);
       for (const [path, db] of this.connections) {
         try {
           await db.close();
