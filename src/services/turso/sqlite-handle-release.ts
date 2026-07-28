@@ -20,6 +20,8 @@ function delay(ms: number): Promise<void> {
  * Upstream: https://github.com/tursodatabase/libsql-js/issues/228
  */
 export async function collectReleasedSqliteHandles(): Promise<void> {
+  if (process.platform !== "win32") return;
+
   const runtime = globalThis as RuntimeWithGarbageCollector;
   const bunGc = runtime.Bun?.gc;
   const globalGc = runtime.gc;
