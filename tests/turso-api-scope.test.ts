@@ -9,7 +9,7 @@ describe("api memory shard scope", () => {
   afterEach(async () => {
     const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
     await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    if (baseDir) rmSync(baseDir, { recursive: true, force: true, maxRetries: 7, retryDelay: 50 });
   });
 
   it("includes user-scope memories in stats, pin, and global search handlers", async () => {

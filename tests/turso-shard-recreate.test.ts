@@ -11,7 +11,7 @@ describe("turso invalid shard protection", () => {
   afterEach(async () => {
     const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
     await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    if (baseDir) rmSync(baseDir, { recursive: true, force: true, maxRetries: 7, retryDelay: 50 });
   });
 
   it("rejects writes on dimension mismatch without moving or emptying the shard", async () => {

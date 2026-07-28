@@ -10,7 +10,7 @@ describe("turso legacy migrator dimension preflight", () => {
   afterEach(async () => {
     const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
     await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    if (baseDir) rmSync(baseDir, { recursive: true, force: true, maxRetries: 7, retryDelay: 50 });
   });
 
   it("preserves legacy dimensions so startup can expose the re-embed migration", async () => {

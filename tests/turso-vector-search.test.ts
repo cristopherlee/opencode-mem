@@ -64,6 +64,6 @@ describe("turso vector search", () => {
     await tursoConnectionManager.closeAll();
     const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
     await closeTursoAndInvalidateCaches();
-    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(baseDir, { recursive: true, force: true, maxRetries: 7, retryDelay: 50 });
   });
 });
