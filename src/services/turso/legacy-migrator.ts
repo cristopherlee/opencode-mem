@@ -12,6 +12,7 @@ import { CONFIG } from "../../config.js";
 import { log } from "../logger.js";
 import { tursoConnectionManager } from "./connection-manager.js";
 import { tursoShardManager } from "./shard-manager.js";
+import { withSqliteFileLockRetry } from "./sqlite-handle-release.js";
 import { tursoVectorSearch } from "./vector-search.js";
 import { blobToFloat32Array } from "./vector-utils.js";
 import type { MemoryRecord } from "./types.js";
@@ -228,10 +229,10 @@ async function restoreFromBackup(dbPath: string): Promise<void> {
   await tursoConnectionManager.closeConnection(dbPath);
 
   if (existsSync(dbPath)) {
-    unlinkSync(dbPath);
+    await withSqliteFileLockRetry(() => unlinkSync(dbPath));
   }
 
-  renameSync(backup, dbPath);
+  await withSqliteFileLockRetry(() => renameSync(backup, dbPath));
 
   const sidecarPathFile = sidecarPath(dbPath);
   if (existsSync(sidecarPathFile)) {
@@ -327,7 +328,7 @@ async function migrateMemoryShard(dbPath: string): Promise<ShardMigrationSidecar
     return readSidecar(dbPath);
   }
 
-  const db = await tursoConnectionManager.getConnection(dbPath);
+  let db: TursoDb | null = await tursoConnectionManager.getConnection(dbPath);
   const hasTable = await hasMemoriesTable(db);
 
   if (!hasTable) {
@@ -419,9 +420,10 @@ async function migrateMemoryShard(dbPath: string): Promise<ShardMigrationSidecar
   });
 
   const backup = backupPath(dbPath);
+  db = null;
   await tursoConnectionManager.closeConnection(dbPath);
   if (existsSync(dbPath)) {
-    renameSync(dbPath, backup);
+    await withSqliteFileLockRetry(() => renameSync(dbPath, backup));
   }
 
   const freshDb = await tursoConnectionManager.getConnection(dbPath);

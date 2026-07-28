@@ -5,11 +5,11 @@ import {
   mkdtempSync,
   readdirSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 
 const SCOPE_HASH = "0123456789abcdef";
 
@@ -20,9 +20,7 @@ describe("turso re-embed migration safety", () => {
   afterEach(async () => {
     restoreEmbedding?.();
     restoreEmbedding = undefined;
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    await cleanupTursoTestDirectory(baseDir);
   });
 
   async function createSourceShard() {

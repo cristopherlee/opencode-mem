@@ -1,15 +1,14 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 
 describe("turso shard rotation", () => {
   let baseDir: string;
 
   afterEach(async () => {
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    await cleanupTursoTestDirectory(baseDir);
   });
 
   it("marks a full shard read-only and creates the next shard", async () => {

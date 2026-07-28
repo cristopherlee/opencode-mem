@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 
 const TEST_SCOPE_HASH = "a1b2c3d4e5f67890";
 
@@ -9,9 +10,7 @@ describe("turso invalid shard protection", () => {
   let baseDir: string;
 
   afterEach(async () => {
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    await cleanupTursoTestDirectory(baseDir);
   });
 
   it("rejects writes on dimension mismatch without moving or emptying the shard", async () => {

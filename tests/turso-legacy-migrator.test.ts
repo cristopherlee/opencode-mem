@@ -2,15 +2,14 @@ import { describe, expect, it, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 import { createClient } from "@libsql/client";
 
 describe("turso legacy migrator", () => {
   let baseDir: string;
 
   afterEach(async () => {
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    await cleanupTursoTestDirectory(baseDir);
   });
 
   async function createLegacyShard(

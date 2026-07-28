@@ -24,7 +24,7 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
-          - macos-13
+          - macos-15-intel
           - macos-15
 
     steps:
@@ -43,11 +43,11 @@ jobs:
       - name: Typecheck source
         run: bun run typecheck
 
-      - name: Run test suite
-        run: bun test
-
       - name: Build package artifacts
         run: bun run build
+
+      - name: Run test suite
+        run: bun test
 
       - name: Pack and install published package shape
         shell: bash
@@ -64,6 +64,17 @@ jobs:
 
           cd "$smoke_dir"
           npm init -y
+          # npm ignores overrides declared by installed dependencies, so mirror the plugin's
+          # native-runtime pin at the temporary root used by this package smoke test.
+          override_version=$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { resolve } from "node:path";
+            const pkg = JSON.parse(readFileSync(resolve(process.env.GITHUB_WORKSPACE, "package.json"), "utf8"));
+            process.stdout.write(pkg.overrides?.["onnxruntime-node"] ?? "");
+          ')
+          if [ -n "$override_version" ]; then
+            npm pkg set "overrides.onnxruntime-node=$override_version"
+          fi
           npm install --ignore-scripts "$tarball_path"
           cp "$GITHUB_WORKSPACE/scripts/native-deps-smoke.mjs" ./native-deps-smoke.mjs
           cp "$GITHUB_WORKSPACE/scripts/verify-libsql-vector.mjs" ./verify-libsql-vector.mjs

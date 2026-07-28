@@ -1,16 +1,15 @@
 import { describe, expect, it, afterEach } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 import { createClient } from "@libsql/client";
 
 describe("turso legacy migrator dimension preflight", () => {
   let baseDir: string;
 
   afterEach(async () => {
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true });
+    await cleanupTursoTestDirectory(baseDir);
   });
 
   it("preserves legacy dimensions so startup can expose the re-embed migration", async () => {
