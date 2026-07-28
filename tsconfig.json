@@ -5,6 +5,7 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "allowJs": true,
+    "types": ["bun-types"],
 
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": false,
@@ -30,4 +31,3 @@
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
-

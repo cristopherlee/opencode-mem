@@ -20,12 +20,71 @@ import type { MemoryScope } from "./services/client.js";
 import { getHostClientConfig } from "./services/ai/opencode-host-config.js";
 import { loadOpencodeProvider } from "./services/ai/opencode-provider-loader.js";
 
+import {
+  INTERNAL_CAPTURE_SESSION_TITLE,
+  isInternalCaptureSessionTitle,
+  isTrackedInternalCaptureSession,
+} from "./services/ai/internal-capture-sessions.js";
+
+export { INTERNAL_CAPTURE_SESSION_TITLE, isInternalCaptureSessionTitle };
+
 export function isStructuredSummaryPromptMessage(userMessage: string): boolean {
-  // This is the plugin's own structured-summary request. OpenCode echoes it
-  // through chat.message like a normal user message, but capturing it would
-  // create self-referential memories about the memory prompt instead of the
-  // user's conversation.
+  // This is the plugin's own structured-summary or profile-analysis request.
+  // OpenCode echoes it through chat.message like a normal user message, but
+  // capturing it would create self-referential memories / an infinite learning loop.
+  if (userMessage.includes("# User Profile Analysis")) {
+    return true;
+  }
   return userMessage.includes("Analyze this conversation.") && userMessage.includes('type="skip"');
+}
+
+function extractSessionTitle(response: unknown): string | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const obj = response as {
+    data?: { title?: string };
+    title?: string;
+  };
+  return obj.data?.title ?? obj.title;
+}
+
+async function isInternalCaptureSession(client: unknown, sessionID: string): Promise<boolean> {
+  // Fast path: sessions we created ourselves (survives brief post-delete window).
+  if (isTrackedInternalCaptureSession(sessionID)) {
+    return true;
+  }
+
+  const sessionClient = (
+    client as {
+      session?: {
+        get?: (args: unknown) => Promise<unknown>;
+      };
+    }
+  )?.session;
+
+  // Plugin host client uses path-based args (same as session.messages).
+  if (typeof sessionClient?.get === "function") {
+    try {
+      const response = await sessionClient.get({ path: { id: sessionID } });
+      const title = extractSessionTitle(response);
+      if (isInternalCaptureSessionTitle(title)) {
+        return true;
+      }
+      log("internal capture session check via session.get", {
+        sessionID,
+        title: title ?? null,
+        matched: false,
+      });
+    } catch (error) {
+      log("internal capture session check via session.get failed", {
+        sessionID,
+        error: String(error),
+      });
+    }
+  } else {
+    log("internal capture session check: session.get unavailable", { sessionID });
+  }
+
+  return false;
 }
 
 export async function configureOpencodeHostTransport(ctx: {
@@ -572,6 +631,13 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
         if (!isConfigured() || !CONFIG.autoCaptureEnabled) return;
         const sessionID = event.properties?.sessionID;
         if (!sessionID) return;
+
+        // Transient structured-output sessions must not re-trigger capture/learning
+        // (that self-schedules an unbounded idle → LLM → idle loop).
+        if (await isInternalCaptureSession(ctx.client, sessionID)) {
+          log("Skipping idle processing for internal capture session", { sessionID });
+          return;
+        }
 
         if (idleTimeout) clearTimeout(idleTimeout);
 

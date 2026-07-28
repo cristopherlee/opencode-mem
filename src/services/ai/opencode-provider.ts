@@ -27,6 +27,11 @@ import {
   responseStatus,
   type FetchEndpoint,
 } from "./opencode-diagnostics.js";
+import {
+  INTERNAL_CAPTURE_SESSION_TITLE,
+  trackInternalCaptureSession,
+  untrackInternalCaptureSession,
+} from "./internal-capture-sessions.js";
 import { createLazyV2Client, type HostTransport } from "./opencode-sdk-client.js";
 
 let _connectedProviders: Set<string> = new Set();
@@ -205,6 +210,8 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
       await deleteSession(base, sessionID, directory);
     } catch {
       // intentionally swallowed
+    } finally {
+      untrackInternalCaptureSession(sessionID);
     }
   }
 }
@@ -244,7 +251,7 @@ async function generateViaSdkClient<T>(
   args: SdkStructuredOutputArgs<T>
 ): Promise<T> {
   const createdResponse = await client.session.create({
-    title: "opencode-mem capture",
+    title: INTERNAL_CAPTURE_SESSION_TITLE,
     ...(args.directory ? { directory: args.directory } : {}),
   });
   const created = readSdkData<{ id?: string }>(createdResponse, "POST /session");
@@ -255,6 +262,7 @@ async function generateViaSdkClient<T>(
   }
 
   const sessionID = created.id;
+  trackInternalCaptureSession(sessionID);
   try {
     const promptResponse = await client.session.prompt({
       sessionID,
@@ -293,6 +301,8 @@ async function generateViaSdkClient<T>(
       });
     } catch {
       // Best-effort cleanup for the transient capture session.
+    } finally {
+      untrackInternalCaptureSession(sessionID);
     }
   }
 }
@@ -345,7 +355,7 @@ async function createSession(base: string, directory?: string): Promise<string> 
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "opencode-mem capture" }),
+      body: JSON.stringify({ title: INTERNAL_CAPTURE_SESSION_TITLE }),
     }
   );
   if (!body.id) {
@@ -353,6 +363,7 @@ async function createSession(base: string, directory?: string): Promise<string> 
       "opencode-mem: session.create returned no session id; cannot generate structured output"
     );
   }
+  trackInternalCaptureSession(body.id);
   return body.id;
 }
 
