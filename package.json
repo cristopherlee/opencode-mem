@@ -20,12 +20,14 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && bunx tsc && bun scripts/copy-web-assets.mjs",
+    "build": "rm -rf dist && bunx tsc && bun run web:build",
+    "web:dev": "cd web && bun run dev",
+    "web:build": "cd web && bun run build",
     "dev": "tsc --watch",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write \"src/**/*.{ts,js,css,html}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,js,css,html}\"",
+    "format": "prettier --write \"src/**/*.{ts,js,css,html}\" \"web/src/**/*.{ts,tsx,js,jsx,css,html}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js,css,html}\" \"web/src/**/*.{ts,tsx,js,jsx,css,html}\"",
     "prepare": "husky"
   },
   "keywords": [
@@ -53,6 +55,7 @@
     "@opencode-ai/plugin": "^1.18.4",
     "@opencode-ai/sdk": "^1.18.4",
     "franc-min": "^6.2.0",
+    "hono": "^4.12.32",
     "iso-639-3": "^3.0.1",
     "zod": "^4.4.3"
   },

@@ -1,8 +1,15 @@
-const translations = {
+export const translations = {
   en: {
-    title: "┌─ OPENCODE MEMORY EXPLORER ─┐",
+    title: "OpenCode Memory Explorer",
+    brand: "opencode-mem",
     "tab-project": "PROJECT MEMORIES",
     "tab-profile": "USER PROFILE",
+    "nav-menu": "Menu",
+    "nav-close": "Close menu",
+    "nav-language": "Language",
+    "nav-theme": "Theme",
+    "theme-dark": "Dark",
+    "theme-light": "Light",
     "label-tag": "Tag:",
     "label-type": "Type:",
     "label-tags": "Tags:",
@@ -13,9 +20,9 @@ const translations = {
     "btn-select-all": "Select Page",
     "btn-deselect-all": "Deselect All",
     "btn-add-memory": "Add Memory",
-    "section-project": "└─ PROJECT MEMORIES ({count}) ──",
-    "section-profile": "└─ USER PROFILE ──",
-    "section-add": "└─ ADD NEW MEMORY ──",
+    "section-project": "Project Memories ({count})",
+    "section-profile": "User Profile",
+    "section-add": "Add New Memory",
     "opt-all-tags": "All Tags",
     "opt-select-tag": "Select tag",
     "opt-other": "other",
@@ -100,7 +107,6 @@ const translations = {
     "empty-patterns": "No patterns detected yet",
     "empty-workflows": "No workflows identified yet",
     "btn-delete-pair": "Delete Pair",
-    "btn-save": "Save",
     "btn-edit": "Edit",
     "btn-delete": "Delete",
     "label-category": "Category",
@@ -126,9 +132,8 @@ const translations = {
     "label-ai-cleanup-merged-header": "Merged ({count} groups)",
     "label-ai-cleanup-removed-header": "Removed ({count} items)",
     "btn-apply": "Apply",
-    "btn-cancel": "Cancel",
-    "toast-cleanup-success": "Profile cleanup completed",
-    "toast-cleanup-failed": "AI cleanup failed",
+    "toast-ai-cleanup-success": "Profile cleanup completed",
+    "toast-ai-cleanup-failed": "AI cleanup failed",
     "toast-cleanup-apply-failed": "Apply cleanup failed",
     "label-ai-cleanup-select": "Select items for cleanup analysis",
     "label-ai-cleanup-select-low": "Low Freq (≤3)",
@@ -144,9 +149,16 @@ const translations = {
     "auth-warning-text": "Cross-origin editing disabled. Set webServerAuthPassword to enable.",
   },
   zh: {
-    title: "┌─ OPENCODE MEMORY EXPLORER ─┐",
+    title: "OpenCode Memory Explorer",
+    brand: "opencode-mem",
     "tab-project": "项目记忆",
     "tab-profile": "用户画像",
+    "nav-menu": "菜单",
+    "nav-close": "关闭菜单",
+    "nav-language": "语言",
+    "nav-theme": "主题",
+    "theme-dark": "深色",
+    "theme-light": "浅色",
     "label-tag": "标签:",
     "label-type": "类型:",
     "label-tags": "标签:",
@@ -157,9 +169,9 @@ const translations = {
     "btn-select-all": "全选当前页",
     "btn-deselect-all": "取消全选",
     "btn-add-memory": "添加记忆",
-    "section-project": "└─ 项目记忆 ({count}) ──",
-    "section-profile": "└─ 用户画像 ──",
-    "section-add": "└─ 添加新记忆 ──",
+    "section-project": "项目记忆 ({count})",
+    "section-profile": "用户画像",
+    "section-add": "添加新记忆",
     "opt-all-tags": "所有标签",
     "opt-select-tag": "选择标签",
     "opt-other": "其他 (other)",
@@ -242,7 +254,6 @@ const translations = {
     "empty-patterns": "尚未检测到行为模式",
     "empty-workflows": "尚未识别出工作流程",
     "btn-delete-pair": "删除组合",
-    "btn-save": "保存",
     "btn-edit": "编辑",
     "btn-delete": "删除",
     "label-category": "类别",
@@ -268,9 +279,8 @@ const translations = {
     "label-ai-cleanup-merged-header": "合并 ({count} 组)",
     "label-ai-cleanup-removed-header": "删除 ({count} 项)",
     "btn-apply": "确认替换",
-    "btn-cancel": "取消",
-    "toast-cleanup-success": "画像清理完成",
-    "toast-cleanup-failed": "AI 清理失败",
+    "toast-ai-cleanup-success": "画像清理完成",
+    "toast-ai-cleanup-failed": "AI 清理失败",
     "toast-cleanup-apply-failed": "应用清理失败",
     "label-ai-cleanup-select": "选择需要清理分析的条目",
     "label-ai-cleanup-select-low": "低频 (≤3)",
@@ -287,9 +297,16 @@ const translations = {
     "auth-warning-text": "跨源编辑已禁用. 设置 webServerAuthPassword 即可启用.",
   },
   ar: {
-    title: "┌─ مستكشف ذاكرة OpenCode ─┐",
+    title: "مستكشف ذاكرة OpenCode",
+    brand: "opencode-mem",
     "tab-project": "ذكريات المشروع",
     "tab-profile": "ملف المستخدم",
+    "nav-menu": "القائمة",
+    "nav-close": "إغلاق القائمة",
+    "nav-language": "اللغة",
+    "nav-theme": "المظهر",
+    "theme-dark": "داكن",
+    "theme-light": "فاتح",
 
     "label-tag": "الوسم:",
     "label-type": "النوع:",
@@ -303,9 +320,9 @@ const translations = {
     "btn-deselect-all": "إلغاء التحديد",
     "btn-add-memory": "إضافة ذكرى",
 
-    "section-project": "└─ ذكريات المشروع ({count}) ──",
-    "section-profile": "└─ ملف المستخدم ──",
-    "section-add": "└─ إضافة ذكرى جديدة ──",
+    "section-project": "ذكريات المشروع ({count})",
+    "section-profile": "ملف المستخدم",
+    "section-add": "إضافة ذكرى جديدة",
 
     "opt-all-tags": "جميع الوسوم",
     "opt-select-tag": "اختر وسمًا",
@@ -418,7 +435,6 @@ const translations = {
     "empty-workflows": "لم يتم التعرف على أي سير عمل بعد",
 
     "btn-delete-pair": "حذف الزوج",
-    "btn-save": "حفظ",
     "btn-edit": "تعديل",
     "btn-delete": "حذف",
     "label-category": "الفئة",
@@ -446,9 +462,8 @@ const translations = {
     "label-ai-cleanup-merged-header": "دمج ({count} مجموعة)",
     "label-ai-cleanup-removed-header": "حذف ({count} عنصر)",
     "btn-apply": "تأكيد الاستبدال",
-    "btn-cancel": "إلغاء",
-    "toast-cleanup-success": "اكتمل تنظيف الملف الشخصي",
-    "toast-cleanup-failed": "فشل تنظيف الملف الشخصي",
+    "toast-ai-cleanup-success": "اكتمل تنظيف الملف الشخصي",
+    "toast-ai-cleanup-failed": "فشل تنظيف الملف الشخصي",
     "toast-cleanup-apply-failed": "فشل تطبيق التنظيف",
     "label-ai-cleanup-select": "حدد العناصر للتحليل",
     "label-ai-cleanup-select-low": "تردد منخفض (≤3)",
@@ -469,63 +484,6 @@ const translations = {
 
     "auth-warning-text": "التحرير عبر المصادر معطّل. قم بتعيين webServerAuthPassword لتفعيله.",
   },
-};
-
-function getLanguage() {
-  return localStorage.getItem("opencode-mem-lang") || "en";
-}
-
-function setLanguage(lang) {
-  localStorage.setItem("opencode-mem-lang", lang);
-
-  document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
-
-  document.documentElement.lang = lang;
-
-  applyLanguage();
-  document.dispatchEvent(new CustomEvent("langchange"));
-}
-
-function t(key, params = {}) {
-  const lang = getLanguage();
-  let text = translations[lang][key] || translations["en"][key] || key;
-
-  for (const [k, v] of Object.entries(params)) {
-    text = text.replace(new RegExp(`\\{${k}\\}`, "g"), v);
-  }
-
-  return text;
-}
-
-function applyLanguage() {
-  document.querySelectorAll("[data-i18n]").forEach((el) => {
-    const key = el.getAttribute("data-i18n");
-    const translated = t(key);
-
-    // If element has child nodes (like icons), we need to replace only the text nodes
-    if (el.children.length > 0) {
-      let textNodeFound = false;
-      for (const node of el.childNodes) {
-        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== "") {
-          node.textContent = " " + translated + " ";
-          textNodeFound = true;
-        }
-      }
-      if (!textNodeFound) {
-        el.appendChild(document.createTextNode(" " + translated));
-      }
-    } else {
-      el.textContent = translated;
-    }
-  });
-
-  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
-    const key = el.getAttribute("data-i18n-placeholder");
-    el.setAttribute("placeholder", t(key));
-  });
-}
-
-window.t = t;
-window.getLanguage = getLanguage;
-window.setLanguage = setLanguage;
-window.applyLanguage = applyLanguage;
+} as const;
+export type Lang = keyof typeof translations;
+export type TranslationKey = keyof typeof translations.en;

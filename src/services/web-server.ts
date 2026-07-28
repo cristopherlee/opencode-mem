@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { join, dirname } from "node:path";
+import { join, dirname, extname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
 import { corsPreflightResponse, disallowedCorsResponse, isAllowedBrowserOrigin } from "./cors.js";
@@ -369,20 +369,19 @@ export class WebServer {
         return this.serveStaticFile("index.html", "text/html");
       }
 
-      if (path === "/styles.css") {
-        return this.serveStaticFile("styles.css", "text/css");
-      }
-
-      if (path === "/app.js") {
-        return this.serveStaticFile("app.js", "application/javascript");
-      }
-
-      if (path === "/i18n.js") {
-        return this.serveStaticFile("i18n.js", "application/javascript");
-      }
-
       if (path === "/favicon.ico") {
         return this.serveStaticFile("favicon.ico", "image/x-icon");
+      }
+
+      // Vite production assets (hashed JS/CSS/fonts) and other static files.
+      if (method === "GET" && !path.startsWith("/api/")) {
+        const relative = path.replace(/^\/+/, "");
+        if (relative && !relative.includes("..")) {
+          const staticResponse = this.serveStaticFile(relative, this.contentTypeFor(relative));
+          if (staticResponse.status !== 404) {
+            return staticResponse;
+          }
+        }
       }
 
       if (path === "/api/tags" && method === "GET") {
@@ -585,6 +584,11 @@ export class WebServer {
         return this.jsonResponse(result);
       }
 
+      // SPA fallback for client routes (e.g. /profile) — serve the app shell.
+      if (method === "GET" && !path.startsWith("/api/") && !extname(path)) {
+        return this.serveStaticFile("index.html", "text/html");
+      }
+
       return new Response("Not Found", { status: 404 });
     } catch (error) {
       return this.jsonResponse(
@@ -597,24 +601,71 @@ export class WebServer {
     }
   }
 
+  private contentTypeFor(filename: string): string {
+    switch (extname(filename).toLowerCase()) {
+      case ".html":
+        return "text/html";
+      case ".js":
+      case ".mjs":
+        return "application/javascript";
+      case ".css":
+        return "text/css";
+      case ".ico":
+        return "image/x-icon";
+      case ".svg":
+        return "image/svg+xml";
+      case ".png":
+        return "image/png";
+      case ".jpg":
+      case ".jpeg":
+        return "image/jpeg";
+      case ".woff":
+        return "font/woff";
+      case ".woff2":
+        return "font/woff2";
+      case ".ttf":
+        return "font/ttf";
+      case ".json":
+        return "application/json";
+      case ".map":
+        return "application/json";
+      default:
+        return "application/octet-stream";
+    }
+  }
+
   private serveStaticFile(filename: string, contentType: string): Response {
     try {
       const webDir = join(__dirname, "..", "web");
-      const filePath = join(webDir, filename);
+      const filePath = normalize(join(webDir, filename));
+      if (!filePath.startsWith(normalize(webDir)) || !existsSync(filePath)) {
+        return new Response("File not found", { status: 404 });
+      }
 
-      if (contentType.startsWith("image/")) {
+      const cacheControl =
+        filename.startsWith("assets/") || contentType.startsWith("font/")
+          ? "public, max-age=31536000, immutable"
+          : contentType.startsWith("image/")
+            ? "public, max-age=86400"
+            : "no-cache";
+
+      if (
+        contentType.startsWith("image/") ||
+        contentType.startsWith("font/") ||
+        contentType === "application/octet-stream"
+      ) {
         const content = readFileSync(filePath);
         return new Response(content, {
           headers: {
             "Content-Type": contentType,
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": cacheControl,
           },
         });
       }
 
       let content = readFileSync(filePath, "utf-8");
 
-      if (filename === "index.html") {
+      if (filename === "index.html" || filename.endsWith("/index.html")) {
         const token = getOrCreateAuthToken();
         content = content.replace(
           "</head>",
@@ -625,7 +676,7 @@ export class WebServer {
       return new Response(content, {
         headers: {
           "Content-Type": contentType,
-          "Cache-Control": "no-cache",
+          "Cache-Control": cacheControl,
         },
       });
     } catch (error) {

@@ -10,7 +10,7 @@ on:
       - "scripts/native-deps-smoke.mjs"
       - "scripts/verify-libsql-vector.mjs"
       - "scripts/smoke-test.mjs"
-      - "scripts/copy-web-assets.mjs"
+      - "web/**"
       - ".github/workflows/platform-smoke.yml"
   workflow_dispatch:
 
@@ -38,6 +38,10 @@ jobs:
           package-manager-cache: false
 
       - name: Install source dependencies
+        run: bun install
+
+      - name: Install web dependencies
+        working-directory: web
         run: bun install
 
       - name: Typecheck source
