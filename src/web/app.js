@@ -34,7 +34,7 @@ async function fetchAPI(endpoint, options = {}) {
     const controller = new AbortController();
     const timeoutMs =
       options.timeout ||
-      (options.method === "POST" && endpoint.includes("/ai-cleanup") ? 180000 : 60000);
+      (options.method === "POST" && endpoint.includes("/ai-cleanup") ? 300000 : 60000);
     const { timeout: _, headers: extraHeaders, ...fetchOptions } = options;
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetch(API_BASE + endpoint, {
@@ -1332,7 +1332,7 @@ async function showAICleanup() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ includeIds: ids }),
-        timeout: 180000,
+        timeout: 300000,
       });
       loading.classList.add("hidden");
       if (!result.success) {

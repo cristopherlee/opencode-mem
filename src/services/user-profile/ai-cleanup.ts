@@ -189,20 +189,16 @@ function formatForAI(item: IndexedProfileItem): Record<string, unknown> {
 async function callAICleanup(
   prompt: string
 ): Promise<{ profile: IndexedProfile; mapping: AIMapping }> {
-  // Use opencode internal session when opencodeProvider is configured (same pattern as auto-capture)
+  // Use opencode internal session when opencodeProvider is configured (same pattern as auto-capture).
+  // When the client is available, surface OpenCode errors instead of masking them as
+  // "No AI provider configured" via a silent fallback (#177).
   if (CONFIG.opencodeProvider && CONFIG.opencodeModel) {
-    try {
-      const { getV2Client } = await loadOpencodeProvider();
-      const v2Client = getV2Client();
-      if (v2Client) {
-        const result = await callViaOpencodeWithClient(v2Client, prompt);
-        if (result) return result;
-      }
-    } catch (e) {
-      log("AI cleanup: opencode session failed, falling back to external API", {
-        error: String(e),
-      });
+    const { getV2Client } = await loadOpencodeProvider();
+    const v2Client = getV2Client();
+    if (v2Client) {
+      return callViaOpencodeWithClient(v2Client, prompt);
     }
+    log("AI cleanup: opencode client unavailable, falling back to external API");
   }
 
   if (CONFIG.memoryModel && CONFIG.memoryApiUrl) {
@@ -259,6 +255,48 @@ async function callViaExternalAPI(
   };
 }
 
+/** Prompt timeout for profile cleanup sessions (large profiles can exceed 2 minutes). */
+const OPENCODE_CLEANUP_TIMEOUT_MS = 300000;
+
+type PromptPart = { type?: string; text?: string };
+type PromptInfo = {
+  error?: { name: string; data?: { message?: string } };
+};
+type PromptResultShape = {
+  data?: { info?: PromptInfo; parts?: PromptPart[] };
+  info?: PromptInfo;
+  parts?: PromptPart[];
+};
+
+/**
+ * Extract assistant text from an OpenCode session.prompt result.
+ * AssistantMessage has no `text` field; content lives in `parts` (#177).
+ */
+export function extractTextFromPromptResult(promptResult: unknown): {
+  info: PromptInfo | undefined;
+  rawText: string;
+} {
+  const result = promptResult as PromptResultShape;
+  const info = result?.data?.info ?? result?.info;
+  const parts = result?.data?.parts ?? result?.parts ?? [];
+  const rawText = parts
+    .filter((p) => p.type === "text" && p.text)
+    .map((p) => p.text)
+    .join("\n")
+    .trim();
+  return { info, rawText };
+}
+
+function raceWithTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 async function callViaOpencodeWithClient(
   v2Client: any,
   prompt: string
@@ -267,15 +305,14 @@ async function callViaOpencodeWithClient(
   const systemPrompt =
     "You are a user profile cleanup assistant. Merge duplicate entries and return only JSON without markdown wrapping.";
 
-  const created = (await Promise.race([
+  const created = (await raceWithTimeout(
     v2Client.session.create({
       title: "opencode-mem profile cleanup",
       directory: process.cwd(),
     }),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("session.create timeout")), 30000)
-    ),
-  ])) as any;
+    30000,
+    "session.create timeout"
+  )) as any;
   log("AI cleanup: session.create result", {
     rawType: typeof created,
     keys: Object.keys(created || {}),
@@ -289,8 +326,8 @@ async function callViaOpencodeWithClient(
   log("AI cleanup: session created", { sessionID, createMs: Date.now() - t0 });
 
   try {
-    const TIMEOUT_MS = 120000;
-    const promptResult = await Promise.race([
+    const TIMEOUT_MS = OPENCODE_CLEANUP_TIMEOUT_MS;
+    const promptResult = await raceWithTimeout(
       v2Client.session.prompt({
         sessionID,
         model: {
@@ -299,29 +336,21 @@ async function callViaOpencodeWithClient(
         },
         system: systemPrompt,
         parts: [{ type: "text", text: prompt }],
-        noReply: true,
+        // `noReply` suppresses assistant generation; cleanup needs the JSON reply (#177).
+        noReply: false,
       }),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`opencodeClient prompt timeout after ${TIMEOUT_MS}ms`)),
-          TIMEOUT_MS
-        )
-      ),
-    ]);
+      TIMEOUT_MS,
+      `opencodeClient prompt timeout after ${TIMEOUT_MS}ms`
+    );
 
     log("AI cleanup: session.prompt done", { promptMs: Date.now() - t0 });
 
-    const info = (
-      promptResult as {
-        data?: { info?: { text?: string; error?: { name: string; data?: { message?: string } } } };
-      }
-    ).data?.info;
+    const { info, rawText } = extractTextFromPromptResult(promptResult);
 
     if (!info) throw new Error("prompt response missing info");
     if (info.error)
       throw new Error(`opencode reported ${info.error.name}: ${info.error.data?.message ?? ""}`);
 
-    const rawText = info.text?.trim() || "";
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("AI response did not contain valid JSON");
 
