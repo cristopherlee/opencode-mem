@@ -53,6 +53,49 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 
 The plugin downloads automatically on next startup.
 
+## How to use day-to-day
+
+You do **not** need to ask OpenCode to “remember” things for the plugin to work. With the defaults, memory builds up as you work.
+
+### Typical daily flow
+
+1. Enable the plugin (see [Getting Started](#getting-started)) and restart OpenCode.
+2. Configure an AI provider for auto-capture — recommended: `opencodeProvider` + `opencodeModel` (or `"opencodeModel": "inherit"`). Details under [Auto-Capture AI Provider](#auto-capture-ai-provider).
+3. Work normally in OpenCode. When a session goes idle, auto-capture extracts memorable technical context and stores it.
+4. In later sessions, relevant memories are injected into context (see `chatMessage` / compaction settings). Browse or edit them in the web UI at `http://127.0.0.1:4747`.
+5. Use the `memory` tool when you want something stored or retrieved immediately (see [Usage Examples](#usage-examples)).
+
+### Automatic vs manual memory
+
+| Approach                                               | When it runs                                        | What you do                                  |
+| ------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------- |
+| **Auto-capture** (`autoCaptureEnabled: true`, default) | After conversation turns when the session goes idle | Nothing — extraction is automatic            |
+| **Manual** `memory` tool / commands                    | On demand                                           | `add`, `search`, `list`, `profile`, `forget` |
+
+Manual search/add/list still work even if auto-capture has no provider configured. Auto-capture and user profile learning need a provider that can return structured/tool-call output.
+
+### Memory vs AGENTS.md / project docs
+
+| Store in **memory**                                                  | Store in **AGENTS.md** / static docs                        |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Project-specific decisions, bug patterns, “we tried X and it failed” | Stable rules and workflows that rarely change               |
+| User preferences discovered over sessions                            | Always-on coding conventions and process                    |
+| Facts that should follow you across chats                            | Instructions every agent should see regardless of retrieval |
+
+Rule of thumb: if it is a lasting project instruction, put it in AGENTS.md; if it is context that grows from real work, let memory (or auto-capture) hold it.
+
+### Intelligent prompt-based memory extraction
+
+That phrase in the feature list is **auto-capture**: after a conversation, a background AI request summarizes technical work and saves it as memory. No special prompt from you is required. It uses `opencodeProvider` / `opencodeModel` when set, otherwise the manual `memoryProvider` fallback.
+
+### User profile
+
+The **User Profile** is a separate, cross-project summary of how you like to work (preferences, habits). It is updated on an interval (`userProfileAnalysisInterval`, default every 10 analyzed prompts), shown in the web UI’s profile view, and readable via `memory({ mode: "profile" })`. You do not populate it by hand for normal use — profile learning fills it when a provider is ready.
+
+### Web UI
+
+Open `http://127.0.0.1:4747` to browse the memory–prompt timeline, inspect captures, and manage the user profile. If you bind the server beyond loopback, see [Web UI HTTP Basic Auth](#web-ui-http-basic-auth).
+
 ## Usage Examples
 
 ```typescript
