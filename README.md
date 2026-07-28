@@ -49,6 +49,8 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 }
 ```
 
+**Windows:** use `%USERPROFILE%\.config\opencode\opencode.json` (for example `C:\Users\<you>\.config\opencode\opencode.json`). This plugin does **not** read `%APPDATA%` or `%LOCALAPPDATA%` for its OpenCode plugin entry — put the file under `.config\opencode` in your user profile, then restart OpenCode. If the plugin does not appear, confirm that path and restart again.
+
 The plugin downloads automatically on next startup.
 
 ## Usage Examples
@@ -66,6 +68,8 @@ Access the web interface at `http://127.0.0.1:4747` for visual memory browsing a
 ## Configuration Essentials
 
 Configure at `~/.config/opencode/opencode-mem.jsonc`:
+
+**Windows:** `%USERPROFILE%\.config\opencode\opencode-mem.jsonc` (same `.config\opencode` directory as above — not AppData). Default storage resolves to `%USERPROFILE%\.opencode-mem\data` (the `~` form in the example below expands to your user home on Windows as well).
 
 The plugin creates a full commented template at this path on first startup. This trimmed example shows the most common settings:
 
