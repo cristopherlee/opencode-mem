@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { findMarkerProjectRoot, getProjectTagInfo } from "../src/services/tags.js";
+import { findMarkerProjectRoot, getGitCommonDir, getProjectTagInfo } from "../src/services/tags.js";
 
 const createdDirs: string[] = [];
 
@@ -44,9 +44,12 @@ describe("project scope identity", () => {
   it("uses one project tag across worktrees in the same repo", () => {
     const { repoDir, worktreeDir } = createRepoWithWorktree();
 
+    const mainCommonDir = getGitCommonDir(repoDir);
+    const worktreeCommonDir = getGitCommonDir(worktreeDir);
     const mainTag = getProjectTagInfo(repoDir);
     const worktreeTag = getProjectTagInfo(worktreeDir);
 
+    expect(mainCommonDir).toBe(worktreeCommonDir);
     expect(mainTag.tag).toBe(worktreeTag.tag);
     expect(mainTag.projectPath).toBe(worktreeTag.projectPath);
     expect(mainTag.projectName).toBe(basename(repoDir));
