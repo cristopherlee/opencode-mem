@@ -1,15 +1,14 @@
 import { describe, expect, it, afterEach } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 
 describe("turso ready gate", () => {
   let baseDir: string;
 
   afterEach(async () => {
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    if (baseDir) rmSync(baseDir, { recursive: true, force: true, maxRetries: 7, retryDelay: 50 });
+    await cleanupTursoTestDirectory(baseDir);
   });
 
   it("runs legacy migration once and initializes metadata", async () => {

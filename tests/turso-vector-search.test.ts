@@ -1,11 +1,18 @@
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cleanupTursoTestDirectory } from "./turso-test-utils.js";
 
 describe("turso vector search", () => {
+  let baseDir: string;
+
+  afterEach(async () => {
+    await cleanupTursoTestDirectory(baseDir);
+  });
+
   it("inserts and searches memories with native vector index", async () => {
-    const baseDir = mkdtempSync(join(tmpdir(), "turso-vector-test-"));
+    baseDir = mkdtempSync(join(tmpdir(), "turso-vector-test-"));
 
     const { CONFIG } = await import("../src/config.js");
     CONFIG.storagePath = baseDir;
@@ -60,10 +67,5 @@ describe("turso vector search", () => {
       "turso"
     );
     expect(limitedResults).toHaveLength(1);
-
-    await tursoConnectionManager.closeAll();
-    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
-    await closeTursoAndInvalidateCaches();
-    rmSync(baseDir, { recursive: true, force: true, maxRetries: 7, retryDelay: 50 });
   });
 });
