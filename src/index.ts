@@ -464,7 +464,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
             });
           }
 
-          const embeddingInitError = memoryClient.getEmbeddingInitError();
+          const embeddingInitError = memoryClient.getEmbeddingInitError?.();
           if (embeddingInitError) {
             return JSON.stringify({ success: false, error: embeddingInitError });
           }
