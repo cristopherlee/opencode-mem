@@ -109,7 +109,9 @@ export function getGitCommonDir(directory: string): string | null {
       : normalize(resolve(directory, commonDir));
 
     if (existsSync(resolved)) {
-      return realpathSync(resolved);
+      const canonical =
+        process.platform === "win32" ? realpathSync.native(resolved) : realpathSync(resolved);
+      return normalize(canonical);
     }
 
     return resolved;
