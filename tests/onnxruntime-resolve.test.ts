@@ -141,32 +141,6 @@ describe("onnxruntime resolve shim (#184 / #210)", () => {
     expect(packageVersionNear(pinnedCommon)).toBe(PINNED);
   });
 
-  it("production loadLocalTransformersBackend pins the 1.22.0 stack", async () => {
-    const { loadLocalTransformersBackend } = await import("../src/services/embedding.js");
-    const transformers = await loadLocalTransformersBackend();
-    expect(typeof transformers.pipeline).toBe("function");
-    expect(transformers.env).toBeTruthy();
-
-    prepareOnnxruntimeForTransformers();
-    const pinnedNode = requireFromHere.resolve("onnxruntime-node");
-    const pinnedCommon = createRequire(pinnedNode).resolve("onnxruntime-common");
-    expect(packageVersionNear(pinnedNode)).toBe(PINNED);
-    expect(packageVersionNear(pinnedCommon)).toBe(PINNED);
-  });
-
-  it("resolves transformers before prepare so post-shim package resolve is unnecessary", () => {
-    // Documents the OpenCode Bun --compile ordering constraint (#210):
-    // package-name resolve of transformers must happen before the onnx shim is installed.
-    const specifier = ["@huggingface", "transformers"].join("/");
-    const entry = requireFromHere.resolve(specifier);
-    expect(entry.replaceAll("\\", "/")).toContain("@huggingface/transformers");
-
-    prepareOnnxruntimeForTransformers();
-    const transformers = requireFromHere(entry) as { pipeline: unknown; env: unknown };
-    expect(typeof transformers.pipeline).toBe("function");
-    expect(transformers.env).toBeTruthy();
-  });
-
   it("isolated nested 1.24.3 layout is overridden by prepare shim", () => {
     const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
     const fixture = mkdtempSync(join(tmpdir(), "opencode-mem-nested-shim-"));

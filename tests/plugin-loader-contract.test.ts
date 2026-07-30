@@ -69,8 +69,16 @@ describe("OpenCode 1.3.x plugin-loader contract", () => {
     // Verify the callable surface is correct regardless of warmup outcome
     expect(typeof serverFn).toBe("function");
 
+    // This is a loader-contract test, not an embedding smoke test. Mark the
+    // process-global warmup as complete so server() does not load the native
+    // ONNX stack in the background. Bun 1.3.14 can crash during process teardown
+    // after that native addon was loaded, even though every assertion passed.
+    const warmupKey = Symbol.for("opencode-mem.plugin.warmedup");
+    const hadWarmupState = Object.prototype.hasOwnProperty.call(globalThis, warmupKey);
+    const previousWarmupState = Reflect.get(globalThis, warmupKey);
+    Reflect.set(globalThis, warmupKey, true);
+
     // Attempt to invoke server with a minimal mock PluginInput.
-    // The plugin may throw during warmup (missing Turso runtime in test env) — that is expected.
     // If it succeeds, assert the returned hooks have the expected shape.
     const mockInput = {
       client: {},
@@ -89,8 +97,14 @@ describe("OpenCode 1.3.x plugin-loader contract", () => {
       expect(typeof hooks["chat.message"]).toBe("function");
       expect(typeof hooks["event"]).toBe("function");
     } catch {
-      // Warmup/Turso failure in test environment is acceptable.
+      // Other runtime setup failures in the minimal test environment are acceptable.
       // The callable surface assertion above is sufficient for contract verification.
+    } finally {
+      if (hadWarmupState) {
+        Reflect.set(globalThis, warmupKey, previousWarmupState);
+      } else {
+        Reflect.deleteProperty(globalThis, warmupKey);
+      }
     }
   });
 });
