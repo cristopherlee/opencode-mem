@@ -57,9 +57,10 @@
     "franc-min": "^6.2.0",
     "hono": "^4.12.32",
     "iso-639-3": "^3.0.1",
+    "onnxruntime-node": "1.22.0",
     "zod": "^4.4.3"
   },
-  "//": "Remove onnxruntime-node override after https://github.com/microsoft/onnxruntime/issues/27961 is resolved",
+  "//": "Pin onnxruntime-node@1.22.0 (direct + override) until https://github.com/microsoft/onnxruntime/issues/27961 is resolved. Direct dep is required because OpenCode installs plugins nested and npm ignores nested package overrides (#184).",
   "overrides": {
     "onnxruntime-node": "1.22.0"
   },

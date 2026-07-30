@@ -80,15 +80,21 @@ export class LocalMemoryClient {
     return this.isInitialized && embeddingService.isWarmedUp;
   }
 
+  getEmbeddingInitError(): string | null {
+    return embeddingService.initError;
+  }
+
   getStatus(): {
     dbConnected: boolean;
     modelLoaded: boolean;
     ready: boolean;
+    embeddingError: string | null;
   } {
     return {
       dbConnected: this.isInitialized,
       modelLoaded: embeddingService.isWarmedUp,
       ready: this.isInitialized && embeddingService.isWarmedUp,
+      embeddingError: embeddingService.initError,
     };
   }
 
