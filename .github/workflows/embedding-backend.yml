@@ -100,10 +100,15 @@ jobs:
           node-version: "22"
           package-manager-cache: false
 
-      - name: Install and build package
-        run: |
-          bun install
-          bun run build
+      - name: Install source dependencies
+        run: bun install
+
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install
+
+      - name: Build package
+        run: bun run build
 
       - name: Nested fixture + embedding (Bun 1.3.14)
         run: bun scripts/verify-nested-onnxruntime-fixture.mjs
