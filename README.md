@@ -33,6 +33,8 @@ This plugin uses embedded Turso/libSQL with native vector indexes (`F32_BLOB`, `
 - Internet access on first use if you use the default local embedding model, because the model is downloaded by `@huggingface/transformers`.
 - For source/development installs, run `bun install` before building or testing. The published plugin package installs its runtime dependencies automatically through OpenCode.
 
+**CI-tested platforms:** Linux, Windows, macOS 15 and macOS 26 on both Intel (`darwin/x64`) and Apple Silicon (`darwin/arm64`). Older macOS releases are not excluded by that matrix; they are simply outside the current GitHub-hosted runner set.
+
 **Notes:**
 
 - Vector embeddings are stored and searched directly in Turso/libSQL; inserts update the vector index automatically.
@@ -228,7 +230,7 @@ Example — remote OpenAI embeddings:
 
 Changing `embeddingModel` (or dimensions) can trigger re-embedding of stored memories on next startup. Prefer picking a model once and sticking with it for a given data directory.
 
-**Intel Mac (`darwin/x64`):** newer `onnxruntime-node` builds may ship without an x64 native binding, so local embedding init can fail. Use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above). If you stay on local embeddings after a plugin upgrade, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) so the install picks up the pinned runtime.
+**Intel Mac (`darwin/x64`):** newer `onnxruntime-node` builds may ship without an x64 native binding, so local embedding init can fail. `opencode-mem` pins `onnxruntime-node@1.22.0` and loads transformers through a CJS resolve shim so OpenCode nested installs keep that binding. If init still fails after a plugin upgrade, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) and reinstall, or use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above).
 
 ### Memory Scope
 
@@ -349,7 +351,7 @@ Troubleshooting:
 - If auto-capture reports that a provider is not connected, confirm the provider name with `opencode providers list` and configure that provider in opencode first.
 - If a proxy or custom provider returns plain text instead of structured/tool output, choose another model/provider or use one of the manual provider modes above.
 - For models that reject `temperature`, add `"memoryTemperature": false` when using manual API configuration.
-- **Intel Mac (darwin/x64) local embedding:** if embedding init fails (missing onnxruntime x64 binding), switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`, or clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node`. See [Choosing / configuring embeddings](#choosing-configuring-embeddings). MLX is not supported.
+- **Intel Mac (darwin/x64) local embedding:** if embedding init fails, clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node@1.22.0`, or switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`. See [Choosing / configuring embeddings](#choosing-configuring-embeddings). MLX is not supported.
 
 ## Public Subpath Exports
 

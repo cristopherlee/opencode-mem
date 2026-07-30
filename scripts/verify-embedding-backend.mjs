@@ -4,10 +4,10 @@
  * feature-extraction path loads and runs the native ONNX runtime without
  * crashing on the host platform.
  *
- * This is the reproducible form of the manual checks requested when migrating
- * off @xenova/transformers: the prior revert (8fb0836) was motivated by native
- * ONNX runtime crashes under Windows + Bun, so this runs in CI across
- * ubuntu / macOS / windows to catch a regression before merge.
+ * Mirrors the production loader: prefer the CJS export so OpenCode nested
+ * installs can pin onnxruntime-node@1.22.0 via Module._resolveFilename (#210).
+ * This script deliberately does not import prepareOnnxruntimeForTransformers()
+ * because the embedding-backend workflow runs without a TypeScript build.
  *
  * Uses a tiny model (all-MiniLM-L6-v2, ~25 MB) — the goal is to exercise the
  * runtime load + a real embedding call, not to validate any specific model.
@@ -16,15 +16,59 @@
  * `node scripts/verify-embedding-backend.mjs`.
  */
 
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+
 const MODEL = "Xenova/all-MiniLM-L6-v2";
 const EXPECTED_DIMS = 384;
+const PINNED_ONNX_VERSION = "1.22.0";
 
 const runtime = typeof globalThis.Bun !== "undefined" ? "bun" : "node";
 console.log(
   `[verify-embedding] runtime=${runtime} platform=${process.platform} arch=${process.arch}`
 );
 
-const { pipeline, env } = await import("@huggingface/transformers");
+function readPackageJsonNear(entry) {
+  let dir = dirname(entry);
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, "package.json");
+    if (existsSync(candidate)) {
+      const parsed = JSON.parse(readFileSync(candidate, "utf8"));
+      // onnxruntime-common ships helper package.json files under dist/* without version.
+      if (typeof parsed.version === "string" && parsed.version.length > 0) {
+        return parsed;
+      }
+    }
+    dir = dirname(dir);
+  }
+  throw new Error(`versioned package.json not found near ${entry}`);
+}
+
+const requireFromHere = createRequire(import.meta.url);
+const transformersSpecifier = ["@huggingface", "transformers"].join("/");
+const { pipeline, env } = requireFromHere(transformersSpecifier);
+
+// Assert production-shaped CJS load resolved the pinned onnxruntime stack.
+const onnxEntry = requireFromHere.resolve("onnxruntime-node");
+const onnxPkg = readPackageJsonNear(onnxEntry);
+if (onnxPkg.name !== "onnxruntime-node" || onnxPkg.version !== PINNED_ONNX_VERSION) {
+  console.error(
+    `[verify-embedding] FAIL: expected onnxruntime-node@${PINNED_ONNX_VERSION}, got ${onnxPkg.name}@${onnxPkg.version} at ${onnxEntry}`
+  );
+  process.exit(1);
+}
+console.log(`[verify-embedding] onnxruntime-node@${onnxPkg.version} at ${onnxEntry}`);
+
+const commonEntry = createRequire(onnxEntry).resolve("onnxruntime-common");
+const commonPkg = readPackageJsonNear(commonEntry);
+if (commonPkg.name !== "onnxruntime-common" || commonPkg.version !== PINNED_ONNX_VERSION) {
+  console.error(
+    `[verify-embedding] FAIL: expected onnxruntime-common@${PINNED_ONNX_VERSION}, got ${commonPkg.name}@${commonPkg.version} at ${commonEntry}`
+  );
+  process.exit(1);
+}
+console.log(`[verify-embedding] onnxruntime-common@${commonPkg.version} at ${commonEntry}`);
 
 // Mirror the plugin's runtime configuration.
 env.allowLocalModels = true;

@@ -1,10 +1,13 @@
 import { CONFIG } from "../config.js";
 import { log } from "./logger.js";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import {
-  formatMissingOnnxruntimeBindingError,
+  formatOnnxruntimeInitError,
   prepareOnnxruntimeForTransformers,
 } from "./onnxruntime-resolve.js";
+
+const requireFromHere = createRequire(import.meta.url);
 
 const TIMEOUT_MS = 30000;
 const GLOBAL_EMBEDDING_KEY = Symbol.for("opencode-mem.embedding.instance");
@@ -50,23 +53,13 @@ function getTransformersPackageSpecifier(): string {
   return ["@huggingface", "transformers"].join("/");
 }
 
-function rewriteOnnxruntimeInitError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  if (
-    message.includes("onnxruntime_binding.node") ||
-    message.includes("onnxruntime-node") ||
-    /napi-v6\/[^/]+\/[^/]+/.test(message)
-  ) {
-    return new Error(formatMissingOnnxruntimeBindingError(), { cause: error });
-  }
-  return error instanceof Error ? error : new Error(message);
-}
-
 async function ensureTransformersLoaded(): Promise<NonNullable<typeof _transformers>> {
   if (_transformers !== null) return _transformers;
-  // Pin onnxruntime-node to our direct dep before transformers resolves it (#184).
+  // Pin onnxruntime-node (+ common) to our direct 1.22.0 stack before transformers
+  // resolves them (#184 / #210). Load the CJS export so Module._resolveFilename
+  // shim applies — the ESM entry's static import bypasses it under OpenCode nested installs.
   prepareOnnxruntimeForTransformers();
-  const mod = (await import(getTransformersPackageSpecifier())) as HfTransformers;
+  const mod = requireFromHere(getTransformersPackageSpecifier()) as HfTransformers;
   mod.env.allowLocalModels = true;
   mod.env.allowRemoteModels = true;
   mod.env.cacheDir = join(CONFIG.storagePath, ".cache");
@@ -151,7 +144,7 @@ export class EmbeddingService {
       this.initError = null;
       log("Embedding model warmed up", { model: CONFIG.embeddingModel });
     } catch (error) {
-      const rewritten = rewriteOnnxruntimeInitError(error);
+      const rewritten = formatOnnxruntimeInitError(error);
       this.initPromise = null;
       this.initError = rewritten.message;
       log("Failed to initialize embedding model", { error: rewritten.message });
