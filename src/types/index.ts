@@ -17,4 +17,5 @@ export interface MemoryMetadata {
   [key: string]: unknown;
 }
 
-export type AIProviderType = "openai-chat" | "openai-responses" | "anthropic";
+export type AIProviderType =
+  "openai-chat" | "openai-responses" | "anthropic" | "minimax" | "google-gemini";

@@ -1,4 +1,5 @@
-export type AIProviderType = "openai-chat" | "openai-responses" | "anthropic" | "google-gemini";
+export type AIProviderType =
+  "openai-chat" | "openai-responses" | "anthropic" | "minimax" | "google-gemini";
 
 export interface AIMessage {
   id?: number;
