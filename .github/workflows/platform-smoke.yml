@@ -9,6 +9,7 @@ on:
       - "src/**"
       - "scripts/native-deps-smoke.mjs"
       - "scripts/verify-libsql-vector.mjs"
+      - "scripts/verify-nested-onnxruntime-fixture.mjs"
       - "scripts/smoke-test.mjs"
       - "web/**"
       - ".github/workflows/platform-smoke.yml"
@@ -21,11 +22,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Intel: macos-15-intel / macos-26-intel (darwin/x64).
+        # Apple Silicon: macos-15 / macos-26 (darwin/arm64).
         os:
           - ubuntu-latest
           - windows-latest
           - macos-15-intel
+          - macos-26-intel
           - macos-15
+          - macos-26
 
     steps:
       - uses: actions/checkout@v5
