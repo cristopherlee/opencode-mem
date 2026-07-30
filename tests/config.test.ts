@@ -33,6 +33,10 @@ describe("config", () => {
       expect(typeof CONFIG.embeddingModel).toBe("string");
     });
 
+    it("should default embeddingUseTaskPrefixes to false", () => {
+      expect(CONFIG.embeddingUseTaskPrefixes).toBe(false);
+    });
+
     it("should have numeric embeddingDimensions", () => {
       expect(typeof CONFIG.embeddingDimensions).toBe("number");
       expect(CONFIG.embeddingDimensions).toBeGreaterThan(0);

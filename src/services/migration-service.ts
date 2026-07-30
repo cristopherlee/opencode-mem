@@ -292,10 +292,14 @@ export class MigrationService {
                 .filter(Boolean)
             : [];
           const embeddingInput = tags.length > 0 ? `${content}\nTags: ${tags.join(", ")}` : content;
-          const vector = await embeddingService.embedWithTimeout(embeddingInput);
+          const vector = await embeddingService.embedWithTimeout(embeddingInput, {
+            task: "document",
+          });
           const tagsVector =
             tags.length > 0
-              ? await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags))
+              ? await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags), {
+                  task: "document",
+                })
               : undefined;
 
           stagedBatch.push({

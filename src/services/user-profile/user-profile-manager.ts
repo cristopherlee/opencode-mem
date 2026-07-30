@@ -569,7 +569,9 @@ export class UserProfileManager {
 
       if (useEmbedding && item.description.length >= minDescLen && !(item as any).centroid) {
         try {
-          const emb = await embed.embed(normalizeDescription(item.description));
+          const emb = await embed.embed(normalizeDescription(item.description), {
+            task: "document",
+          });
           const arr = Array.from(emb);
           (item as any).centroid = arr;
           (item as any).anchor = arr;
@@ -630,7 +632,9 @@ export class UserProfileManager {
         let top2SameCat = false;
         let top2Band: "strong" | "weak" | null = null;
 
-        const newEmb = await embed.embed(normalizeDescription(newItem.description));
+        const newEmb = await embed.embed(normalizeDescription(newItem.description), {
+          task: "document",
+        });
 
         for (let i = 0; i < existing.length; i++) {
           const existingItem = existing[i];
@@ -1060,7 +1064,9 @@ export class UserProfileManager {
       let initAnchor: number[] | undefined;
       if (useEmbedding && newItem.description.length >= minDescLen) {
         try {
-          const emb = await embed.embed(normalizeDescription(newItem.description));
+          const emb = await embed.embed(normalizeDescription(newItem.description), {
+            task: "document",
+          });
           initCentroid = Array.from(emb);
           initAnchor = initCentroid;
         } catch {}
@@ -1730,7 +1736,9 @@ Generate a concise, abstract description of the user's general behavioral tenden
           if (evidence.length >= 3) {
             const oldDesc = item.description;
             const evEmbs = await Promise.all(
-              evidence.map((e: string) => embed.embed(normalizeDescription(e)))
+              evidence.map((e: string) =>
+                embed.embed(normalizeDescription(e), { task: "document" })
+              )
             );
             const sumVec = evEmbs.reduce(
               (acc: number[], e: any) => {
@@ -1742,8 +1750,10 @@ Generate a concise, abstract description of the user's general behavioral tenden
             const evCentroid = l2Normalize(sumVec);
 
             let adopted = false;
-            const oldEmb = await embed.embed(normalizeDescription(item.description));
-            const newEmb = await embed.embed(normalizeDescription(evolved));
+            const oldEmb = await embed.embed(normalizeDescription(item.description), {
+              task: "document",
+            });
+            const newEmb = await embed.embed(normalizeDescription(evolved), { task: "document" });
             const cosOld = cosineSimilarityNumbers(Array.from(oldEmb) as number[], evCentroid);
             const cosNew = cosineSimilarityNumbers(Array.from(newEmb) as number[], evCentroid);
 

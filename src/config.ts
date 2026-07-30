@@ -31,6 +31,8 @@ interface OpenCodeMemConfig {
   embeddingDimensions?: number;
   embeddingApiUrl?: string;
   embeddingApiKey?: string;
+  /** Opt-in Nomic task prefixes (`search_document:` / `search_query:`). Default false. */
+  embeddingUseTaskPrefixes?: boolean;
   similarityThreshold?: number;
   maxMemories?: number;
   maxProfileItems?: number;
@@ -140,6 +142,7 @@ const DEFAULTS: Required<
   storagePath: join(DATA_DIR, "data"),
   embeddingModel: "Xenova/nomic-embed-text-v1",
   embeddingDimensions: 768,
+  embeddingUseTaskPrefixes: false,
   similarityThreshold: 0.6,
   maxMemories: 10,
   maxProfileItems: 5,
@@ -238,6 +241,10 @@ const CONFIG_TEMPLATE = `{
   
   // Default: Nomic Embed v1 (768 dimensions, 8192 context, multilingual)
   "embeddingModel": "Xenova/nomic-embed-text-v1",
+
+  // Opt-in Nomic task prefixes (search_document: / search_query:). After enabling,
+  // re-index existing memories so store and query vectors stay aligned.
+  // "embeddingUseTaskPrefixes": true,
   
   // Auto-detected dimensions (no need to set manually)
   // "embeddingDimensions": 768,
@@ -572,6 +579,8 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     userNameOverride: fileConfig.userNameOverride,
     embeddingModel: fileConfig.embeddingModel ?? DEFAULTS.embeddingModel,
     embeddingDimensions,
+    embeddingUseTaskPrefixes:
+      fileConfig.embeddingUseTaskPrefixes ?? DEFAULTS.embeddingUseTaskPrefixes,
     embeddingApiUrl: fileConfig.embeddingApiUrl,
     embeddingApiKey: fileConfig.embeddingApiUrl
       ? resolveSecretValue(fileConfig.embeddingApiKey ?? process.env.OPENAI_API_KEY)

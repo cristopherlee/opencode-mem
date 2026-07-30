@@ -326,10 +326,12 @@ export async function handleAddMemory(data: {
     const embeddingInput =
       tags.length > 0 ? `${data.content}\nTags: ${tags.join(", ")}` : data.content;
 
-    const vector = await embeddingService.embedWithTimeout(embeddingInput);
+    const vector = await embeddingService.embedWithTimeout(embeddingInput, { task: "document" });
     let tagsVector: Float32Array | undefined = undefined;
     if (tags.length > 0) {
-      tagsVector = await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags));
+      tagsVector = await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags), {
+        task: "document",
+      });
     }
 
     const { scope, hash } = extractScopeFromTag(data.containerTag);
@@ -446,10 +448,12 @@ export async function handleUpdateMemory(
     const existingTags = existingMemory.tags ? String(existingMemory.tags) : "";
     const tags =
       data.tags || (existingTags ? existingTags.split(",").map((t: string) => t.trim()) : []);
-    const vector = await embeddingService.embedWithTimeout(newContent);
+    const vector = await embeddingService.embedWithTimeout(newContent, { task: "document" });
     let tagsVector: Float32Array | undefined = undefined;
     if (tags.length > 0) {
-      tagsVector = await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags));
+      tagsVector = await embeddingService.embedWithTimeout(formatTagsForEmbedding(tags), {
+        task: "document",
+      });
     }
 
     const db = await tursoConnectionManager.getConnection(foundShard.dbPath);
@@ -536,7 +540,7 @@ export async function handleSearch(
     if (!query) return { success: false, error: "query is required" };
     await ensureTursoReady();
     await embeddingService.warmup();
-    const queryVector = await embeddingService.embedWithTimeout(query);
+    const queryVector = await embeddingService.embedWithTimeout(query, { task: "query" });
     let memoryResults: any[] = [];
     let promptResults: any[] = [];
     if (tag) {
@@ -1434,9 +1438,11 @@ export async function handleRunTagMigrationBatch(
           }
         }
 
-        const vector = await embeddingService.embedWithTimeout(m.content);
+        const vector = await embeddingService.embedWithTimeout(m.content, { task: "document" });
         const tagsVector = currentTags.length
-          ? await embeddingService.embedWithTimeout(formatTagsForEmbedding(currentTags))
+          ? await embeddingService.embedWithTimeout(formatTagsForEmbedding(currentTags), {
+              task: "document",
+            })
           : undefined;
         await tursoVectorSearch.updateVector(db, m.id, vector, tagsVector);
 
