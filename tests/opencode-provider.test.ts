@@ -4,11 +4,18 @@ import {
   createV2Client,
   generateStructuredOutput,
   getV2Client,
+  isInternalStructuredSession,
   isProviderConnected,
   resetHostFetch,
+  resetInternalStructuredSessions,
   setConnectedProviders,
   setHostFetch,
+  setStructuredOutputTimeoutMsForTests,
   setV2Client,
+  STRUCTURED_OUTPUT_AGENT,
+  STRUCTURED_OUTPUT_METADATA,
+  STRUCTURED_OUTPUT_PERMISSIONS,
+  STRUCTURED_OUTPUT_TOOLS,
 } from "../src/services/ai/opencode-provider.js";
 
 const schema = z.object({
@@ -104,11 +111,15 @@ describe("generateStructuredOutput", () => {
   beforeEach(() => {
     mock = undefined;
     resetHostFetch();
+    resetInternalStructuredSessions();
+    setStructuredOutputTimeoutMsForTests(undefined);
   });
 
   afterEach(() => {
     mock?.restore();
     resetHostFetch();
+    resetInternalStructuredSessions();
+    setStructuredOutputTimeoutMsForTests(undefined);
   });
 
   it("posts schema without noReply and returns parsed structured output", async () => {
@@ -142,6 +153,12 @@ describe("generateStructuredOutput", () => {
 
     expect(result).toEqual({ topic: "auth", count: 3 });
 
+    const createCall = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/session"));
+    expect(createCall).toBeDefined();
+    const createBody = createCall!.body as Record<string, unknown>;
+    expect(createBody.permission).toEqual(STRUCTURED_OUTPUT_PERMISSIONS);
+    expect(createBody.metadata).toEqual(STRUCTURED_OUTPUT_METADATA);
+
     const promptCall = mock.calls.find((c) => c.url.includes("/session/ses_test_1/message"));
     expect(promptCall).toBeDefined();
     const promptBody = promptCall!.body as Record<string, unknown>;
@@ -150,6 +167,8 @@ describe("generateStructuredOutput", () => {
       modelID: "gpt-4o-mini",
     });
     expect(promptBody.system).toBe("system");
+    expect(promptBody.agent).toBe(STRUCTURED_OUTPUT_AGENT);
+    expect(promptBody.tools).toEqual(STRUCTURED_OUTPUT_TOOLS);
     expect(promptBody).not.toHaveProperty("noReply");
     const format = promptBody.format as Record<string, unknown>;
     expect(format.type).toBe("json_schema");
@@ -158,6 +177,7 @@ describe("generateStructuredOutput", () => {
     const deleteCall = mock.calls.find((c) => c.method === "DELETE");
     expect(deleteCall).toBeDefined();
     expect(deleteCall!.url.endsWith("/session/ses_test_1")).toBe(true);
+    expect(isInternalStructuredSession("ses_test_1")).toBe(false);
   });
 
   it("rejects with full info.error details when opencode reports an assistant error", async () => {
@@ -367,8 +387,7 @@ describe("generateStructuredOutput", () => {
 
     const promptCall = mock.calls.find((c) => c.url.includes("/session/ses_retry/message"));
     const format = (promptCall!.body as Record<string, unknown>).format as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(format?.retryCount).toBe(2);
   });
 });
@@ -906,5 +925,164 @@ describe("resolveOpencodeModelRef / inherit", () => {
     } finally {
       mock.restore();
     }
+  });
+});
+
+describe("generateStructuredOutput tool isolation (issue #189)", () => {
+  let mock: ReturnType<typeof installFetchMock> | undefined;
+
+  beforeEach(() => {
+    mock = undefined;
+    resetHostFetch();
+    resetInternalStructuredSessions();
+    setStructuredOutputTimeoutMsForTests(undefined);
+  });
+
+  afterEach(() => {
+    mock?.restore();
+    resetHostFetch();
+    resetInternalStructuredSessions();
+    setStructuredOutputTimeoutMsForTests(undefined);
+  });
+
+  it("fails closed when structured output is missing and still deletes the session", async () => {
+    mock = installFetchMock((call) => {
+      if (call.method === "POST" && call.url.endsWith("/session")) {
+        return { body: { id: "ses_no_so" } };
+      }
+      if (call.method === "POST" && call.url.includes("/session/ses_no_so/message")) {
+        // Simulates a turn that used ordinary tools / no StructuredOutput result.
+        return {
+          body: {
+            info: {},
+            parts: [{ type: "tool", tool: "bash" }],
+          },
+        };
+      }
+      if (call.method === "DELETE" && call.url.endsWith("/session/ses_no_so")) {
+        return { body: true };
+      }
+      throw new Error(`unexpected fetch: ${call.method} ${call.url}`);
+    });
+
+    const client = createV2Client("http://127.0.0.1:9999");
+    await expect(
+      generateStructuredOutput({
+        client,
+        providerID: "github-copilot",
+        modelID: "gpt-4o-mini",
+        systemPrompt: "s",
+        userPrompt: "u",
+        schema,
+      })
+    ).rejects.toThrow(/no structured output/);
+
+    expect(mock.calls.some((c) => c.method === "DELETE")).toBe(true);
+    expect(isInternalStructuredSession("ses_no_so")).toBe(false);
+  });
+
+  it("times out, aborts, and deletes when the prompt never returns", async () => {
+    setStructuredOutputTimeoutMsForTests(50);
+
+    const original = globalThis.fetch;
+    const calls: FetchCall[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req =
+        input instanceof Request
+          ? input
+          : new Request(typeof input === "string" ? input : input.toString(), init);
+      const url = req.url;
+      const method = req.method.toUpperCase();
+      let body: unknown = undefined;
+      if (method !== "GET" && method !== "HEAD") {
+        try {
+          const text = await req.text();
+          body = text ? JSON.parse(text) : undefined;
+        } catch {
+          body = undefined;
+        }
+      }
+      calls.push({ url, method, body });
+      if (method === "POST" && url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "ses_hang" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (method === "POST" && url.includes("/session/ses_hang/message")) {
+        // Never resolves — simulates an unbounded agent/tool loop.
+        return await new Promise<Response>(() => {});
+      }
+      if (method === "POST" && url.includes("/session/ses_hang/abort")) {
+        return new Response(JSON.stringify(true), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && url.includes("/session/ses_hang")) {
+        return new Response(JSON.stringify(true), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+    mock = {
+      calls,
+      restore: () => {
+        globalThis.fetch = original;
+      },
+    };
+
+    const client = createV2Client("http://127.0.0.1:9999");
+    await expect(
+      generateStructuredOutput({
+        client,
+        providerID: "github-copilot",
+        modelID: "gpt-4o-mini",
+        systemPrompt: "s",
+        userPrompt: "u",
+        schema,
+      })
+    ).rejects.toThrow(/structured-output timed out after 50ms/);
+
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/abort"))).toBe(true);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+    expect(isInternalStructuredSession("ses_hang")).toBe(false);
+  });
+
+  it("tracks internal session IDs only while the prompt is in flight", async () => {
+    let sawDuringPrompt = false;
+    mock = installFetchMock((call) => {
+      if (call.method === "POST" && call.url.endsWith("/session")) {
+        return { body: { id: "ses_track" } };
+      }
+      if (call.method === "POST" && call.url.includes("/session/ses_track/message")) {
+        sawDuringPrompt = isInternalStructuredSession("ses_track");
+        return {
+          body: {
+            info: { structured_output: { topic: "x", count: 1 } },
+            parts: [],
+          },
+        };
+      }
+      if (call.method === "DELETE") {
+        return { body: true };
+      }
+      throw new Error(`unexpected fetch: ${call.method} ${call.url}`);
+    });
+
+    const client = createV2Client("http://127.0.0.1:9999");
+    await generateStructuredOutput({
+      client,
+      providerID: "github-copilot",
+      modelID: "gpt-4o-mini",
+      systemPrompt: "s",
+      userPrompt: "u",
+      schema,
+    });
+
+    expect(sawDuringPrompt).toBe(true);
+    expect(isInternalStructuredSession("ses_track")).toBe(false);
   });
 });

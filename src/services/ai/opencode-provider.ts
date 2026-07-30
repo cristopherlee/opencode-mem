@@ -11,6 +11,10 @@
  * then delete the session so it does not pollute the user's TUI session
  * list.
  *
+ * Internal capture sessions are least-privilege (issue #189): ordinary
+ * agent tools are denied, only StructuredOutput is allowed, a dedicated
+ * agent caps steps, and a hard timeout fails closed.
+ *
  * The primary transport is the authenticated v2 SDK client initialized from
  * the plugin host's client configuration. A raw fetch fallback remains for
  * older SDK builds that do not expose the v2 session methods.
@@ -33,6 +37,38 @@ import {
   untrackInternalCaptureSession,
 } from "./internal-capture-sessions.js";
 import { createLazyV2Client, type HostTransport } from "./opencode-sdk-client.js";
+
+/** Dedicated agent registered via the plugin config hook (step-capped). */
+export const STRUCTURED_OUTPUT_AGENT = "opencode-mem-structured";
+
+/** Hard ceiling for a single internal structured-output prompt. */
+export const STRUCTURED_OUTPUT_TIMEOUT_MS = 90_000;
+
+let _structuredOutputTimeoutMs = STRUCTURED_OUTPUT_TIMEOUT_MS;
+
+/** Test helper: override the structured-output prompt timeout. Pass undefined to reset. */
+export function setStructuredOutputTimeoutMsForTests(ms: number | undefined): void {
+  _structuredOutputTimeoutMs = ms ?? STRUCTURED_OUTPUT_TIMEOUT_MS;
+}
+
+export const STRUCTURED_OUTPUT_PERMISSIONS = [
+  { permission: "*", pattern: "*", action: "deny" as const },
+  { permission: "StructuredOutput", pattern: "*", action: "allow" as const },
+];
+
+export const STRUCTURED_OUTPUT_TOOLS: Record<string, boolean> = {
+  "*": false,
+  StructuredOutput: true,
+};
+
+export const STRUCTURED_OUTPUT_METADATA = {
+  "opencode-mem": {
+    internal: true,
+    purpose: "structured-output",
+  },
+};
+
+const _internalSessions = new Set<string>();
 
 let _connectedProviders: Set<string> = new Set();
 let _v2Client: OpencodeClient | undefined;
@@ -70,6 +106,57 @@ export function createV2Client(serverUrl: URL | string, transport?: HostTranspor
   _v2BaseUrl = baseUrl;
   _useSdkTransport = Boolean(activeTransport?.fetch || activeTransport?.headers);
   return createLazyV2Client(baseUrl, activeTransport);
+}
+
+/** True while an internal structured-output session is live (create → delete). */
+export function isInternalStructuredSession(sessionID: string): boolean {
+  return _internalSessions.has(sessionID);
+}
+
+/** Test helper: clear tracked internal session IDs. */
+export function resetInternalStructuredSessions(): void {
+  _internalSessions.clear();
+}
+
+function markInternalSession(sessionID: string): void {
+  _internalSessions.add(sessionID);
+}
+
+function unmarkInternalSession(sessionID: string): void {
+  _internalSessions.delete(sessionID);
+}
+
+function sessionCreateBody(): Record<string, unknown> {
+  return {
+    title: INTERNAL_CAPTURE_SESSION_TITLE,
+    permission: STRUCTURED_OUTPUT_PERMISSIONS,
+    metadata: STRUCTURED_OUTPUT_METADATA,
+  };
+}
+
+function sessionPromptFields(args: {
+  providerID: string;
+  modelID: string;
+  systemPrompt: string;
+  userPrompt: string;
+  jsonSchema: Record<string, unknown>;
+  retryCount?: number;
+}): Record<string, unknown> {
+  return {
+    model: { providerID: args.providerID, modelID: args.modelID },
+    agent: STRUCTURED_OUTPUT_AGENT,
+    system: args.systemPrompt,
+    parts: [{ type: "text", text: args.userPrompt }],
+    tools: STRUCTURED_OUTPUT_TOOLS,
+    // `noReply` suppresses assistant generation in current OpenCode builds,
+    // which also suppresses `info.structured_output`; structured capture needs
+    // the assistant run even though the temporary session is deleted afterward.
+    format: {
+      type: "json_schema",
+      schema: args.jsonSchema,
+      ...(args.retryCount !== undefined ? { retryCount: args.retryCount } : {}),
+    },
+  };
 }
 
 export interface StructuredOutputOptions<T> {
@@ -138,7 +225,7 @@ function readRecentOpencodeModel(
  * Generate one structured-output completion via opencode's HTTP API.
  * Throws on: session.create failure, prompt failure, AssistantMessage.error
  * (StructuredOutputError / ApiError / ...), missing `info.structured`,
- * or final Zod validation failure.
+ * timeout, or final Zod validation failure.
  */
 export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<T>): Promise<T> {
   const resolved = resolveOpencodeModelRef({
@@ -177,17 +264,22 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
   const base = stripTrailingSlash(baseUrl);
 
   const sessionID = await createSession(base, directory);
+  markInternalSession(sessionID);
   try {
-    const info = await promptSession(base, {
-      sessionID,
-      directory,
-      providerID,
-      modelID,
-      systemPrompt,
-      userPrompt,
-      jsonSchema,
-      retryCount,
-    });
+    const info = await withStructuredOutputTimeout(
+      () =>
+        promptSession(base, {
+          sessionID,
+          directory,
+          providerID,
+          modelID,
+          systemPrompt,
+          userPrompt,
+          jsonSchema,
+          retryCount,
+        }),
+      () => abortSession(base, sessionID, directory)
+    );
 
     if (info.error) {
       throw new Error(
@@ -204,6 +296,7 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
 
     return schema.parse(structuredOutput);
   } finally {
+    unmarkInternalSession(sessionID);
     // Best-effort: leaving a transient session behind is cosmetic, not
     // worth failing a successful capture if cleanup itself errors.
     try {
@@ -221,6 +314,7 @@ type V2SessionClient = {
     create(parameters?: Record<string, unknown>): Promise<unknown>;
     prompt(parameters: Record<string, unknown>): Promise<unknown>;
     delete(parameters: Record<string, unknown>): Promise<unknown>;
+    abort?(parameters: Record<string, unknown>): Promise<unknown>;
   };
 };
 
@@ -251,7 +345,7 @@ async function generateViaSdkClient<T>(
   args: SdkStructuredOutputArgs<T>
 ): Promise<T> {
   const createdResponse = await client.session.create({
-    title: INTERNAL_CAPTURE_SESSION_TITLE,
+    ...sessionCreateBody(),
     ...(args.directory ? { directory: args.directory } : {}),
   });
   const created = readSdkData<{ id?: string }>(createdResponse, "POST /session");
@@ -263,19 +357,21 @@ async function generateViaSdkClient<T>(
 
   const sessionID = created.id;
   trackInternalCaptureSession(sessionID);
+  markInternalSession(sessionID);
   try {
-    const promptResponse = await client.session.prompt({
-      sessionID,
-      ...(args.directory ? { directory: args.directory } : {}),
-      model: { providerID: args.providerID, modelID: args.modelID },
-      system: args.systemPrompt,
-      parts: [{ type: "text", text: args.userPrompt }],
-      format: {
-        type: "json_schema",
-        schema: args.jsonSchema,
-        ...(args.retryCount !== undefined ? { retryCount: args.retryCount } : {}),
-      },
-    });
+    const promptResponse = await withStructuredOutputTimeout(
+      () =>
+        client.session.prompt({
+          sessionID,
+          ...(args.directory ? { directory: args.directory } : {}),
+          ...sessionPromptFields(args),
+        }),
+      () =>
+        client.session.abort?.({
+          sessionID,
+          ...(args.directory ? { directory: args.directory } : {}),
+        })
+    );
     const data = readSdkData<MessageV2WithParts>(promptResponse, "POST /session/{id}/message");
     if (!data.info) {
       throw new Error("opencode-mem: prompt response missing `info`");
@@ -294,6 +390,7 @@ async function generateViaSdkClient<T>(
     }
     return args.schema.parse(structuredOutput);
   } finally {
+    unmarkInternalSession(sessionID);
     try {
       await client.session.delete({
         sessionID,
@@ -304,6 +401,34 @@ async function generateViaSdkClient<T>(
     } finally {
       untrackInternalCaptureSession(sessionID);
     }
+  }
+}
+
+async function withStructuredOutputTimeout<T>(
+  run: () => Promise<T>,
+  onTimeout: () => unknown
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutMs = _structuredOutputTimeoutMs;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`opencode-mem: structured-output timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([run(), timeoutPromise]);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("structured-output timed out after")) {
+      try {
+        await onTimeout();
+      } catch {
+        // best-effort abort
+      }
+    }
+    throw error;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -354,7 +479,7 @@ async function createSession(base: string, directory?: string): Promise<string> 
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: INTERNAL_CAPTURE_SESSION_TITLE }),
+      body: JSON.stringify(sessionCreateBody()),
     }
   );
   if (!body.id) {
@@ -415,19 +540,7 @@ interface MessageV2WithParts {
 
 async function promptSession(base: string, args: PromptSessionArgs): Promise<AssistantInfo> {
   const url = `${base}/session/${encodeURIComponent(args.sessionID)}/message${buildQuery(args.directory)}`;
-  const body: Record<string, unknown> = {
-    model: { providerID: args.providerID, modelID: args.modelID },
-    system: args.systemPrompt,
-    parts: [{ type: "text", text: args.userPrompt }],
-    // `noReply` suppresses assistant generation in current OpenCode builds,
-    // which also suppresses `info.structured_output`; structured capture needs
-    // the assistant run even though the temporary session is deleted afterward.
-    format: {
-      type: "json_schema",
-      schema: args.jsonSchema,
-      ...(args.retryCount !== undefined ? { retryCount: args.retryCount } : {}),
-    },
-  };
+  const body = sessionPromptFields(args);
   const data = await fetchJson<MessageV2WithParts>(
     { label: "POST /session/{id}/message", url },
     {
@@ -440,6 +553,15 @@ async function promptSession(base: string, args: PromptSessionArgs): Promise<Ass
     throw new Error("opencode-mem: prompt response missing `info`");
   }
   return data.info;
+}
+
+async function abortSession(base: string, sessionID: string, directory?: string): Promise<void> {
+  const url = `${base}/session/${encodeURIComponent(sessionID)}/abort${buildQuery(directory)}`;
+  try {
+    await activeFetch()(new Request(url, { method: "POST" }));
+  } catch {
+    // best-effort
+  }
 }
 
 async function deleteSession(base: string, sessionID: string, directory?: string): Promise<void> {
