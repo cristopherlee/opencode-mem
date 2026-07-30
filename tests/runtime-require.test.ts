@@ -85,7 +85,7 @@ describe("createRuntimeRequire (#210 compiled host)", () => {
       path,
     } as RuntimeImportMeta);
     const resolved = req.resolve("@huggingface/transformers");
-    expect(resolved).toContain("@huggingface/transformers");
+    expect(resolved.replaceAll("\\", "/")).toContain("@huggingface/transformers");
     const mod = req("@huggingface/transformers") as { pipeline?: unknown };
     expect(typeof mod.pipeline).toBe("function");
   });

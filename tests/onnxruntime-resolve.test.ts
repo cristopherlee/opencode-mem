@@ -159,7 +159,7 @@ describe("onnxruntime resolve shim (#184 / #210)", () => {
     // package-name resolve of transformers must happen before the onnx shim is installed.
     const specifier = ["@huggingface", "transformers"].join("/");
     const entry = requireFromHere.resolve(specifier);
-    expect(entry).toContain("@huggingface/transformers");
+    expect(entry.replaceAll("\\", "/")).toContain("@huggingface/transformers");
 
     prepareOnnxruntimeForTransformers();
     const transformers = requireFromHere(entry) as { pipeline: unknown; env: unknown };

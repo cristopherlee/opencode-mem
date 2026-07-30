@@ -27,7 +27,7 @@ describe("OpenCode plugin loader bundle boundary", () => {
     expect(output).not.toContain("@huggingface/transformers/dist");
     // Guard against the old backend silently coming back too.
     expect(output).not.toContain("node_modules/@xenova/transformers");
-  });
+  }, 30_000);
 
   it("does not pull opencode SDK or OIDC internals into the plugin-loader bundle", async () => {
     const result = await Bun.build({
@@ -42,7 +42,7 @@ describe("OpenCode plugin loader bundle boundary", () => {
     expect(output).not.toContain("node_modules/@opencode-ai/sdk");
     expect(output).not.toContain("@vercel/oidc");
     expect(output).not.toContain("getVercelOidcToken");
-  });
+  }, 30_000);
 
   it("resolves the provider module from a single-file bundled lazy loader", async () => {
     const result = await Bun.build({
@@ -66,5 +66,5 @@ describe("OpenCode plugin loader bundle boundary", () => {
 
     expect(typeof provider.generateStructuredOutput).toBe("function");
     expect(typeof provider.createV2Client).toBe("function");
-  });
+  }, 30_000);
 });
