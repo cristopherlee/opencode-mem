@@ -230,7 +230,7 @@ Example — remote OpenAI embeddings:
 
 Changing `embeddingModel` (or dimensions) can trigger re-embedding of stored memories on next startup. Prefer picking a model once and sticking with it for a given data directory.
 
-**Intel Mac (`darwin/x64`):** newer `onnxruntime-node` builds may ship without an x64 native binding, so local embedding init can fail. `opencode-mem` pins `onnxruntime-node@1.22.0` and loads transformers through a CJS resolve shim so OpenCode nested installs keep that binding. If init still fails after a plugin upgrade, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) and reinstall, or use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above).
+**Intel Mac (`darwin/x64`):** newer `onnxruntime-node` builds may ship without an x64 native binding, so local embedding init can fail. `opencode-mem` pins `onnxruntime-node@1.22.0` and loads transformers through a CJS resolve shim so OpenCode nested installs keep that binding. Transformers is resolved to an absolute path before that shim is installed so OpenCode's Bun `--compile` host does not fail with `Cannot find module '@huggingface/transformers' from ''`. If init still fails after a plugin upgrade, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) and reinstall, or use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above).
 
 ### Memory Scope
 
