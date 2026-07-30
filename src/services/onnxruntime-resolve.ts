@@ -12,10 +12,11 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createRuntimeRequire } from "./runtime-require.js";
 
 const PACKAGE_NAME = "onnxruntime-node";
 const COMMON_PACKAGE = "onnxruntime-common";
-const requireFromHere = createRequire(import.meta.url);
+const requireFromHere = createRuntimeRequire(import.meta);
 
 let shimInstalled = false;
 let pinnedPackageRoot: string | null = null;
@@ -168,11 +169,15 @@ export function installOnnxruntimeResolveShim(): void {
 
   const original = Module._resolveFilename;
   Module._resolveFilename = function (
+    this: unknown,
     request: string,
     parent: unknown,
     isMain: boolean,
     options?: unknown
   ): string {
+    // Only intercept the onnx stack. Forwarding every other request through a
+    // wrapped _resolveFilename is required, but must not alter Bun --compile
+    // parent handling for unrelated packages (#210 follow-up).
     const pinnedNode = resolvePinnedRequest(request, PACKAGE_NAME, pinnedEntry);
     if (pinnedNode) return pinnedNode;
 

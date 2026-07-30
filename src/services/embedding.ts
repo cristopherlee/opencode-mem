@@ -1,13 +1,13 @@
 import { CONFIG } from "../config.js";
 import { log } from "./logger.js";
-import { createRequire } from "node:module";
 import { join } from "node:path";
 import {
   formatOnnxruntimeInitError,
   prepareOnnxruntimeForTransformers,
 } from "./onnxruntime-resolve.js";
+import { createRuntimeRequire } from "./runtime-require.js";
 
-const requireFromHere = createRequire(import.meta.url);
+const requireFromHere = createRuntimeRequire(import.meta);
 
 const TIMEOUT_MS = 30000;
 const GLOBAL_EMBEDDING_KEY = Symbol.for("opencode-mem.embedding.instance");
@@ -58,8 +58,27 @@ async function ensureTransformersLoaded(): Promise<NonNullable<typeof _transform
   // Pin onnxruntime-node (+ common) to our direct 1.22.0 stack before transformers
   // resolves them (#184 / #210). Load the CJS export so Module._resolveFilename
   // shim applies — the ESM entry's static import bypasses it under OpenCode nested installs.
+  //
+  // Critical ordering for OpenCode's Bun --compile host (#210 follow-up):
+  // resolve the transformers absolute path BEFORE installOnnxruntimeResolveShim().
+  // After the shim is installed, non-onnx Module._resolveFilename fallbacks fail with
+  // `Cannot find module '@huggingface/transformers' from ''` even though the package
+  // exists. Loading via the pre-resolved absolute path keeps the onnx pin shim active
+  // for transformers' nested requires without needing a post-shim package resolve.
+  const transformersSpecifier = getTransformersPackageSpecifier();
+  let transformersEntry: string;
+  try {
+    transformersEntry = requireFromHere.resolve(transformersSpecifier);
+  } catch (error) {
+    throw new Error(
+      `Cannot resolve ${transformersSpecifier} before installing the onnxruntime pin shim. ` +
+        `Original error: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    );
+  }
+
   prepareOnnxruntimeForTransformers();
-  const mod = requireFromHere(getTransformersPackageSpecifier()) as HfTransformers;
+  const mod = requireFromHere(transformersEntry) as HfTransformers;
   mod.env.allowLocalModels = true;
   mod.env.allowRemoteModels = true;
   mod.env.cacheDir = join(CONFIG.storagePath, ".cache");
@@ -71,6 +90,14 @@ async function ensureTransformersLoaded(): Promise<NonNullable<typeof _transform
   }
   _transformers = mod;
   return _transformers!;
+}
+
+/**
+ * Production transformers load path used by nested OpenCode install fixtures (#210).
+ * Prefer this over a separately anchored createRequire() so empty-referrer hosts are covered.
+ */
+export async function loadLocalTransformersBackend(): Promise<NonNullable<typeof _transformers>> {
+  return ensureTransformersLoaded();
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

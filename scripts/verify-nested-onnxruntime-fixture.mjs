@@ -6,6 +6,14 @@
  * so @huggingface/transformers may keep nested onnxruntime-node@1.24.3.
  * Then verifies the production CJS prepare+load path pins the direct 1.22.0 stack.
  *
+ * Unlike earlier revisions, Transformers is loaded through the production
+ * `loadLocalTransformersBackend()` export (createRuntimeRequire + shim), not via
+ * a separately constructed absolute createRequire() that would hide empty-referrer
+ * failures inside compiled OpenCode/Bun hosts.
+ *
+ * When running under Bun, also compiles a minimal host binary that dynamically
+ * imports the installed plugin — the same pattern OpenCode uses.
+ *
  * npm may hoist dependencies to the consumer root (fixture/node_modules/...) while
  * OpenCode keeps them under the plugin package. Both layouts are accepted as long as
  * transformers can resolve a nested 1.24.x copy and the production shim pins 1.22.0.
@@ -18,6 +26,7 @@
  *   FIXTURE_DIR     — reuse an existing fixture root that already has opencode-mem installed
  *   SKIP_INSTALL    — when FIXTURE_DIR is set, skip pack/install
  *   SKIP_EMBEDDING  — skip the real feature-extraction smoke
+ *   SKIP_COMPILE_HOST — skip Bun --compile host verification
  *   KEEP_FIXTURE    — keep the temp fixture directory
  */
 
@@ -42,12 +51,12 @@ function fail(msg) {
   process.exit(1);
 }
 
-function run(cmd, args, cwd) {
+function run(cmd, args, cwd, env = process.env) {
   const result = spawnSync(cmd, args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
+    env,
   });
   if (result.status !== 0) {
     fail(
@@ -102,6 +111,77 @@ function findTransformersPackageJson(searchRoots) {
   return null;
 }
 
+async function verifyCompiledHost(pluginRoot) {
+  if (runtime !== "bun") {
+    log("skipping compiled-host check (requires Bun)");
+    return;
+  }
+  if (process.env.SKIP_COMPILE_HOST === "1") {
+    log("skipping compiled-host check (SKIP_COMPILE_HOST=1)");
+    return;
+  }
+
+  const hostDir = mkdtempSync(join(tmpdir(), "opencode-mem-compiled-host-"));
+  const entrySource = join(repoRoot, "scripts", "fixtures", "compiled-host-entry.mjs");
+  const entryCopy = join(hostDir, "entry.ts");
+  const outfile = join(hostDir, "compiled-host");
+  writeFileSync(entryCopy, readFileSync(entrySource));
+  // Match OpenCode's Bun.build compile options — plain `bun build --compile`
+  // does not reproduce the empty-referrer failure from #210.
+  writeFileSync(
+    join(hostDir, "package.json"),
+    JSON.stringify({ name: "opencode-mem-compiled-host", type: "module" }, null, 2)
+  );
+  writeFileSync(
+    join(hostDir, "build.ts"),
+    `
+await Bun.build({
+  entrypoints: ["./entry.ts"],
+  conditions: ["bun", "node"],
+  format: "esm",
+  compile: {
+    autoloadBunfig: false,
+    autoloadDotenv: false,
+    autoloadTsconfig: true,
+    autoloadPackageJson: true,
+    outfile: ${JSON.stringify(outfile)},
+  },
+});
+`
+  );
+
+  log(`compiling OpenCode-shaped Bun host -> ${outfile}`);
+  run("bun", ["build.ts"], hostDir);
+
+  const embeddingEntry = join(pluginRoot, "dist", "services", "embedding.js");
+  const pluginEntry = pathToFileURL(embeddingEntry).href;
+  log(`running compiled host against ${pluginEntry}`);
+  const stdout = run(outfile, [], hostDir, {
+    ...process.env,
+    OPENCODE_MEM_PLUGIN_ENTRY: pluginEntry,
+  });
+  const line = stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1);
+  let parsed;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    fail(`compiled host did not print JSON status\nstdout:\n${stdout}`);
+  }
+  if (!parsed?.ok) fail(`compiled host reported failure: ${line}`);
+  if (parsed.nodeVersion !== PINNED) {
+    fail(`compiled host onnxruntime-node=${parsed.nodeVersion}, expected ${PINNED}`);
+  }
+  if (parsed.commonVersion !== PINNED) {
+    fail(`compiled host onnxruntime-common=${parsed.commonVersion}, expected ${PINNED}`);
+  }
+  log(`compiled host PASS — pinned node=${parsed.nodeEntry}`);
+  rmSync(hostDir, { recursive: true, force: true });
+}
+
 async function main() {
   log(`runtime=${runtime} platform=${process.platform} arch=${process.arch}`);
 
@@ -121,19 +201,33 @@ async function main() {
     const tarball = run("bash", ["-lc", `ls "${packDir}"/opencode-mem-*.tgz | head -1`]).trim();
     if (!tarball) fail("npm pack produced no tarball");
 
+    // OpenCode installs plugins as a tiny consumer package that depends on the
+    // plugin version, then hoists deps under that cache root (#210 reporter layout).
+    // Intentionally NO root overrides — OpenCode nested installs ignore nested overrides (#184).
     writeFileSync(
       join(fixtureDir, "package.json"),
-      JSON.stringify({ name: "opencode-mem-nested-fixture", private: true }, null, 2)
+      JSON.stringify(
+        {
+          name: "opencode-mem-nested-fixture",
+          private: true,
+          dependencies: {
+            "opencode-mem": `file:${tarball}`,
+          },
+        },
+        null,
+        2
+      )
     );
-    // Intentionally NO root overrides — OpenCode nested installs ignore nested overrides (#184).
-    log(`installing ${tarball} into ${fixtureDir} (ignore-scripts, no overrides)`);
-    run("npm", ["install", "--ignore-scripts", tarball], fixtureDir);
+    log(`installing into ${fixtureDir} (ignore-scripts, OpenCode-shaped hoist, no overrides)`);
+    run("npm", ["install", "--ignore-scripts"], fixtureDir);
   }
 
   const pluginRoot = join(fixtureDir, "node_modules", "opencode-mem");
   if (!existsSync(pluginRoot)) fail(`plugin not installed at ${pluginRoot}`);
 
   const searchRoots = [pluginRoot, fixtureDir];
+  // Diagnostic-only require anchored at the production embedding file. Production
+  // loading must go through loadLocalTransformersBackend() below.
   const pluginRequire = createRequire(join(pluginRoot, "dist", "services", "embedding.js"));
 
   let directNodeEntry;
@@ -177,19 +271,17 @@ async function main() {
     log(`pre-shim transformers resolve -> ${nestedResolved} (@${resolvedPkg.version})`);
   }
 
-  // Load production prepare from the installed plugin dist.
-  const resolveUrl = pathToFileURL(
-    join(pluginRoot, "dist", "services", "onnxruntime-resolve.js")
-  ).href;
-  const { prepareOnnxruntimeForTransformers, getPinnedOnnxruntimePackageRoot } =
-    await import(resolveUrl);
+  // Load production prepare + transformers through the real embedding module path.
+  // This exercises createRuntimeRequire(import.meta) instead of a hand-built absolute require.
+  const embeddingUrl = pathToFileURL(join(pluginRoot, "dist", "services", "embedding.js")).href;
+  const embeddingMod = await import(embeddingUrl);
+  if (typeof embeddingMod.loadLocalTransformersBackend !== "function") {
+    fail("dist/services/embedding.js does not export loadLocalTransformersBackend");
+  }
 
-  prepareOnnxruntimeForTransformers();
-
-  const transformersSpecifier = ["@huggingface", "transformers"].join("/");
-  const transformers = pluginRequire(transformersSpecifier);
+  const transformers = await embeddingMod.loadLocalTransformersBackend();
   if (typeof transformers.pipeline !== "function" || !transformers.env) {
-    fail("CJS transformers load did not expose pipeline/env");
+    fail("production loadLocalTransformersBackend did not expose pipeline/env");
   }
 
   const pinnedNode = pluginRequire.resolve("onnxruntime-node");
@@ -206,12 +298,17 @@ async function main() {
     );
   }
 
+  const resolveUrl = pathToFileURL(
+    join(pluginRoot, "dist", "services", "onnxruntime-resolve.js")
+  ).href;
+  const { getPinnedOnnxruntimePackageRoot } = await import(resolveUrl);
   const pinnedRoot = getPinnedOnnxruntimePackageRoot();
   if (!pinnedRoot.includes("onnxruntime-node")) {
     fail(`unexpected pinned root: ${pinnedRoot}`);
   }
 
   // From nested transformers context, shim must force both packages onto the pin.
+  const transformersSpecifier = ["@huggingface", "transformers"].join("/");
   const transformersEntry = pluginRequire.resolve(transformersSpecifier);
   const fromTransformers = createRequire(transformersEntry);
   const shimmedNode = fromTransformers.resolve("onnxruntime-node");
@@ -255,6 +352,8 @@ async function main() {
     }
     log(`embedding ok: ${dims} dims, L2=${norm.toFixed(4)}`);
   }
+
+  await verifyCompiledHost(pluginRoot);
 
   log("PASS — nested fixture loads production CJS path on onnxruntime 1.22.0 stack");
 
