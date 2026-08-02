@@ -43,7 +43,7 @@ interface OpenCodeMemConfig {
   autoCaptureIterationTimeout?: number;
   autoCaptureMaxRetries?: number;
   autoCaptureLanguage?: string;
-  memoryProvider?: "openai-chat" | "openai-responses" | "anthropic";
+  memoryProvider?: "openai-chat" | "openai-responses" | "anthropic" | "minimax";
   memoryModel?: string;
   memoryApiUrl?: string;
   memoryApiKey?: string;
@@ -124,7 +124,7 @@ const DEFAULTS: Required<
   memoryModel?: string;
   memoryApiUrl?: string;
   memoryApiKey?: string;
-  memoryProvider?: "openai-chat" | "openai-responses" | "anthropic";
+  memoryProvider?: "openai-chat" | "openai-responses" | "anthropic" | "minimax";
   memoryTemperature?: number | false;
   memoryExtraParams?: Record<string, unknown>;
   opencodeProvider?: string;
@@ -343,7 +343,7 @@ const CONFIG_TEMPLATE = `{
   
   "autoCaptureEnabled": true,
   
-  // Provider type: "openai-chat" | "openai-responses" | "anthropic"
+  // Provider type: "openai-chat" | "openai-responses" | "anthropic" | "minimax"
   // Note: "openai-chat" is a generic OpenAI API-compatible mode.
   // Any service that follows the OpenAI Chat Completions API can use it via custom "memoryApiUrl".
   "memoryProvider": "openai-chat",
@@ -386,14 +386,23 @@ const CONFIG_TEMPLATE = `{
   //   "memoryModel": "claude-3-5-haiku-20241022"
   //   "memoryApiUrl": "https://api.anthropic.com/v1"
   //   "memoryApiKey": "sk-ant-..."
-  
+
+  // MiniMax (Anthropic Messages-compatible endpoint, with session support):
+  //   "memoryProvider": "minimax"
+  //   "memoryModel": "MiniMax-M3"
+  //   "memoryApiUrl": "https://api.minimax.io"        // global endpoint
+  //   "memoryApiKey": "<MiniMax API key>"
+  //   // China endpoint: "memoryApiUrl": "https://api.minimaxi.com"
+  //   // Optional adaptive thinking for MiniMax-M3:
+  //   "memoryExtraParams": { "thinking": { "type": "adaptive" } }
+
   // Groq (OpenAI-compatible, use openai-chat provider):
   //   "memoryProvider": "openai-chat"
   //   "memoryModel": "llama-3.3-70b-versatile"
   //   "memoryApiUrl": "https://api.groq.com/openai/v1"
   //   "memoryApiKey": "gsk_..."
   
-  // Maximum iterations for multi-turn AI analysis (for openai-responses and anthropic)
+  // Maximum iterations for multi-turn AI analysis (for openai-responses, anthropic, and minimax)
   "autoCaptureMaxIterations": 5,
    
   // Timeout per iteration in milliseconds (30 seconds default)
@@ -598,7 +607,7 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     autoCaptureMaxRetries: fileConfig.autoCaptureMaxRetries ?? DEFAULTS.autoCaptureMaxRetries,
     autoCaptureLanguage: fileConfig.autoCaptureLanguage,
     memoryProvider: (fileConfig.memoryProvider ?? "openai-chat") as
-      "openai-chat" | "openai-responses" | "anthropic",
+      "openai-chat" | "openai-responses" | "anthropic" | "minimax",
     memoryModel: fileConfig.memoryModel,
     memoryApiUrl: fileConfig.memoryApiUrl,
     memoryApiKey,

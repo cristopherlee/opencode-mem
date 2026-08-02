@@ -1,6 +1,7 @@
-import { BaseAIProvider, type ToolCallResult } from "./base-provider.js";
+import { applySafeExtraParams, BaseAIProvider, type ToolCallResult } from "./base-provider.js";
 import { AISessionManager } from "../session/ai-session-manager.js";
 import { ToolSchemaConverter, type ChatCompletionTool } from "../tools/tool-schema.js";
+import type { AIProviderType } from "../session/session-types.js";
 import { log } from "../../logger.js";
 import { UserProfileValidator } from "../validators/user-profile-validator.js";
 
@@ -28,6 +29,14 @@ interface AnthropicResponse {
   };
 }
 
+/**
+ * Base implementation for providers that speak the Anthropic Messages API
+ * (Anthropic itself plus Anthropic-compatible gateways such as MiniMax).
+ *
+ * Subclasses override the session provider tag and the resolved endpoint URL so
+ * the session store and request routing reflect the upstream provider while the
+ * message/tool-call handling stays shared.
+ */
 export class AnthropicMessagesProvider extends BaseAIProvider {
   private aiSessionManager: AISessionManager;
 
@@ -44,17 +53,47 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
     return true;
   }
 
+  /**
+   * Provider tag stored on AI sessions so a subclass (e.g. MiniMax) records its
+   * own tag instead of the literal "anthropic" value.
+   */
+  protected sessionProviderTag(): AIProviderType {
+    return "anthropic";
+  }
+
+  /**
+   * Resolve the Messages endpoint URL. The default appends `/messages` to the
+   * configured base URL, matching Anthropic's `https://api.anthropic.com/v1`
+   * base. Subclasses with a different path layout override this.
+   */
+  protected resolveEndpoint(): string {
+    return `${this.config.apiUrl}/messages`;
+  }
+
+  protected apiErrorLogLabel(): string {
+    return "Anthropic Messages API error";
+  }
+
+  protected toolValidationErrorLogLabel(): string {
+    return "Anthropic tool response validation failed";
+  }
+
+  protected timeoutLabel(): string {
+    return "Anthropic API request timeout";
+  }
+
   async executeToolCall(
     systemPrompt: string,
     userPrompt: string,
     toolSchema: ChatCompletionTool,
     sessionId: string
   ): Promise<ToolCallResult> {
-    let session = await this.aiSessionManager.getSession(sessionId, "anthropic");
+    const providerTag = this.sessionProviderTag();
+    let session = await this.aiSessionManager.getSession(sessionId, providerTag);
 
     if (!session) {
       session = await this.aiSessionManager.createSession({
-        provider: "anthropic",
+        provider: providerTag,
         sessionId,
         metadata: { systemPrompt },
       });
@@ -97,13 +136,17 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
       try {
         const tool = ToolSchemaConverter.toAnthropic(toolSchema);
 
-        const requestBody = {
+        const requestBody: Record<string, unknown> = {
           model: this.config.model,
           max_tokens: this.config.maxTokens ?? 4096,
           system: systemPrompt,
           messages,
           tools: [tool],
         };
+
+        if (this.config.extraParams) {
+          applySafeExtraParams(requestBody, this.config.extraParams);
+        }
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -114,7 +157,7 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
           headers["x-api-key"] = this.config.apiKey;
         }
 
-        const response = await fetch(`${this.config.apiUrl}/messages`, {
+        const response = await fetch(this.resolveEndpoint(), {
           method: "POST",
           headers,
           body: JSON.stringify(requestBody),
@@ -125,7 +168,7 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => response.statusText);
-          log("Anthropic Messages API error", {
+          log(this.apiErrorLogLabel(), {
             provider: this.getProviderName(),
             model: this.config.model,
             status: response.status,
@@ -170,7 +213,7 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
             };
           } catch (validationError) {
             const errorStack = validationError instanceof Error ? validationError.stack : undefined;
-            log("Anthropic tool response validation failed", {
+            log(this.toolValidationErrorLogLabel(), {
               error: String(validationError),
               stack: errorStack,
               errorType:
@@ -210,7 +253,7 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
         if (error instanceof Error && error.name === "AbortError") {
           return {
             success: false,
-            error: `API request timeout (${this.config.iterationTimeout}ms)`,
+            error: `${this.timeoutLabel()} (${this.config.iterationTimeout}ms)`,
             iterations,
           };
         }
