@@ -31,7 +31,7 @@ jobs:
       matrix:
         # Intel: macos-15-intel / macos-26-intel (darwin/x64).
         # Apple Silicon: macos-15 / macos-26 (darwin/arm64).
-        # Intel must keep resolving onnxruntime-node@1.22.0 (#184 / #210).
+        # Intel must keep resolving onnxruntime-node@1.20.1 (#184 / #210 / #225).
         os:
           [
             ubuntu-latest,
@@ -87,8 +87,9 @@ jobs:
       - name: Embedding smoke (Node)
         run: node scripts/verify-embedding-backend.mjs
 
-  # Targeted #210 regression: OpenCode-shaped nested install on the oldest
+  # Targeted #210 / #225 regression: OpenCode-shaped nested install on the oldest
   # available standard Intel runner, using the reporter's Bun/Node versions.
+  # Compiled host must run real inference and exit 0 (no Ort::Env SIGILL).
   nested-intel-regression:
     name: macos-15-intel / nested OpenCode fixture
     runs-on: macos-15-intel
@@ -114,7 +115,7 @@ jobs:
       - name: Build package
         run: bun run build
 
-      - name: Nested fixture + compiled host + embedding (Bun 1.3.14)
+      - name: Nested fixture + compiled host inference/exit (Bun 1.3.14)
         run: bun scripts/verify-nested-onnxruntime-fixture.mjs
 
       - name: Nested fixture + embedding (Node 22)

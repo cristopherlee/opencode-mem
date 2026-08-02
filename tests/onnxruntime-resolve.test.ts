@@ -18,6 +18,7 @@ import {
   formatMissingOnnxruntimeBindingError,
   formatOnnxruntimeInitError,
   getOnnxruntimeBindingPath,
+  getOnnxruntimeNapiDirName,
   getPinnedOnnxruntimePackageRoot,
   installOnnxruntimeResolveShim,
   prepareOnnxruntimeForTransformers,
@@ -95,12 +96,23 @@ describe("onnxruntime resolve shim (#184 / #210)", () => {
     expect(message).toContain("darwin/x64");
     expect(message).toContain("embeddingApiUrl");
     expect(message).toContain("embeddingApiKey");
-    expect(message).toContain("1.22.0");
+    expect(message).toContain("1.20.1");
+    expect(message).toContain("#225");
+  });
+
+  it("discovers the napi layout shipped by the pinned onnxruntime-node package", () => {
+    const napiDir = getOnnxruntimeNapiDirName();
+    expect(napiDir).toMatch(/^napi-v\d+$/);
+    const bindingPath = getOnnxruntimeBindingPath();
+    expect(bindingPath.split(/[/\\]/)).toContain(napiDir);
+    if (existsSync(bindingPath)) {
+      expect(bindingPath.endsWith("onnxruntime_binding.node")).toBe(true);
+    }
   });
 
   it("init error reports missing binding only when the pinned file is absent", () => {
     const rewritten = formatOnnxruntimeInitError(
-      new Error("Cannot find module '.../napi-v6/darwin/nope/onnxruntime_binding.node'"),
+      new Error("Cannot find module '.../napi-v3/darwin/nope/onnxruntime_binding.node'"),
       "darwin",
       "nope"
     );

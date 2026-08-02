@@ -4,7 +4,7 @@
  *
  * Installs the packed plugin into a temporary consumer without root overrides,
  * so @huggingface/transformers may keep nested onnxruntime-node@1.24.3.
- * Then verifies the production CJS prepare+load path pins the direct 1.22.0 stack.
+ * Then verifies the production CJS prepare+load path pins the direct 1.20.1 stack.
  *
  * Unlike earlier revisions, Transformers is loaded through the production
  * `loadLocalTransformersBackend()` export (createRuntimeRequire + shim), not via
@@ -16,7 +16,7 @@
  *
  * npm may hoist dependencies to the consumer root (fixture/node_modules/...) while
  * OpenCode keeps them under the plugin package. Both layouts are accepted as long as
- * transformers can resolve a nested 1.24.x copy and the production shim pins 1.22.0.
+ * transformers can resolve a nested 1.24.x copy and the production shim pins 1.20.1.
  *
  * Usage (from a built repo checkout):
  *   node scripts/verify-nested-onnxruntime-fixture.mjs
@@ -37,7 +37,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const PINNED = "1.22.0";
+const PINNED = "1.20.1";
 const NESTED_BAD = "1.24.3";
 const runtime = typeof globalThis.Bun !== "undefined" ? "bun" : "node";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -59,8 +59,9 @@ function run(cmd, args, cwd, env = process.env) {
     env,
   });
   if (result.status !== 0) {
+    const signal = result.signal ? ` (signal ${result.signal})` : "";
     fail(
-      `${cmd} ${args.join(" ")} exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+      `${cmd} ${args.join(" ")} exited ${result.status}${signal}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
   return result.stdout;
@@ -178,7 +179,16 @@ await Bun.build({
   if (parsed.commonVersion !== PINNED) {
     fail(`compiled host onnxruntime-common=${parsed.commonVersion}, expected ${PINNED}`);
   }
-  log(`compiled host PASS — pinned node=${parsed.nodeEntry}`);
+  if (parsed.embeddingDims !== 384) {
+    fail(`compiled host embeddingDims=${parsed.embeddingDims}, expected 384`);
+  }
+  if (!(parsed.embeddingNorm > 0.9 && parsed.embeddingNorm < 1.1)) {
+    fail(`compiled host embeddingNorm=${parsed.embeddingNorm}, expected ~1.0`);
+  }
+  // `run()` already asserted exit status 0 / no crash signal after inference.
+  log(
+    `compiled host PASS — pinned node=${parsed.nodeEntry}; embedding dims=${parsed.embeddingDims} L2=${parsed.embeddingNorm}`
+  );
   rmSync(hostDir, { recursive: true, force: true });
 }
 
@@ -265,7 +275,7 @@ async function main() {
     const resolvedPkg = readPkgNear(nestedResolved).pkg;
     if (resolvedPkg.version === PINNED) {
       fail(
-        "expected transformers-local resolve to prefer nested 1.24.x before shim, but got pinned 1.22.0"
+        "expected transformers-local resolve to prefer nested 1.24.x before shim, but got pinned 1.20.1"
       );
     }
     log(`pre-shim transformers resolve -> ${nestedResolved} (@${resolvedPkg.version})`);
@@ -293,9 +303,7 @@ async function main() {
     fail(`after prepare, onnxruntime-node resolved to ${nodePkg.version} at ${pinnedNode}`);
   }
   if (commonPkg.version !== PINNED) {
-    fail(
-      `after prepare, onnxruntime-common resolved to ${commonPkg.version} at ${pinnedCommon}`
-    );
+    fail(`after prepare, onnxruntime-common resolved to ${commonPkg.version} at ${pinnedCommon}`);
   }
 
   const resolveUrl = pathToFileURL(
@@ -355,7 +363,7 @@ async function main() {
 
   await verifyCompiledHost(pluginRoot);
 
-  log("PASS — nested fixture loads production CJS path on onnxruntime 1.22.0 stack");
+  log("PASS — nested fixture loads production CJS path on onnxruntime 1.20.1 stack");
 
   if (cleanup && process.env.KEEP_FIXTURE !== "1") cleanup();
 }

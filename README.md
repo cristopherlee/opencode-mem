@@ -230,7 +230,7 @@ Example — remote OpenAI embeddings:
 
 Changing `embeddingModel` (or dimensions) can trigger re-embedding of stored memories on next startup. Prefer picking a model once and sticking with it for a given data directory.
 
-**Intel Mac (`darwin/x64`):** newer `onnxruntime-node` builds may ship without an x64 native binding, so local embedding init can fail. `opencode-mem` pins `onnxruntime-node@1.22.0` and loads transformers through a CJS resolve shim so OpenCode nested installs keep that binding. Transformers is resolved to an absolute path before that shim is installed so OpenCode's Bun `--compile` host does not fail with `Cannot find module '@huggingface/transformers' from ''`. If init still fails after a plugin upgrade, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) and reinstall, or use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above).
+**Intel Mac (`darwin/x64`):** `onnxruntime-node@1.21.0` through `1.23.2` can crash OpenCode's embedded Bun `1.3.14` during process exit after successful local embeddings (`Ort::Env` teardown / SIGILL). The fix shipped in `1.24.1`, but fixed releases still lack an x64 native binding. `opencode-mem` therefore pins `onnxruntime-node@1.20.1` and loads transformers through a CJS resolve shim so OpenCode nested installs keep that binding. Transformers is resolved to an absolute path before that shim is installed so OpenCode's Bun `--compile` host does not fail with `Cannot find module '@huggingface/transformers' from ''`. After upgrading, clear OpenCode's nested plugin cache (`~/.cache/opencode/packages/opencode-mem@*`) and reinstall, or use a remote endpoint via `embeddingApiUrl` + `embeddingApiKey` (example above). This pin stays until onnxruntime publishes a post-teardown-fix darwin/x64 build.
 
 ### Memory Scope
 
@@ -351,7 +351,7 @@ Troubleshooting:
 - If auto-capture reports that a provider is not connected, confirm the provider name with `opencode providers list` and configure that provider in opencode first.
 - If a proxy or custom provider returns plain text instead of structured/tool output, choose another model/provider or use one of the manual provider modes above.
 - For models that reject `temperature`, add `"memoryTemperature": false` when using manual API configuration.
-- **Intel Mac (darwin/x64) local embedding:** if embedding init fails, clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node@1.22.0`, or switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`. See [Choosing / configuring embeddings](#choosing-configuring-embeddings). MLX is not supported.
+- **Intel Mac (darwin/x64) local embedding:** if embedding init fails or OpenCode exits with SIGILL after local memory use, clear `~/.cache/opencode/packages/opencode-mem@*` after upgrading so the nested install picks up the pinned `onnxruntime-node@1.20.1`, or switch to a remote embedding endpoint via `embeddingApiUrl` + `embeddingApiKey`. See [Choosing / configuring embeddings](#choosing-configuring-embeddings). MLX is not supported.
 
 ## Public Subpath Exports
 

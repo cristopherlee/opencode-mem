@@ -57,12 +57,12 @@
     "franc-min": "^6.2.0",
     "hono": "^4.12.32",
     "iso-639-3": "^3.0.1",
-    "onnxruntime-node": "1.22.0",
+    "onnxruntime-node": "1.20.1",
     "zod": "^4.4.3"
   },
-  "//": "Pin onnxruntime-node@1.22.0 (direct + override) until https://github.com/microsoft/onnxruntime/issues/27961 is resolved. Direct dep is required because OpenCode installs plugins nested and npm ignores nested package overrides (#184).",
+  "//": "Pin onnxruntime-node@1.20.1 (direct + override): nested OpenCode installs ignore package overrides (#184); 1.21.0–1.23.2 can SIGILL on macOS process exit (#225); fixed releases still lack darwin/x64 (microsoft/onnxruntime#27961).",
   "overrides": {
-    "onnxruntime-node": "1.22.0"
+    "onnxruntime-node": "1.20.1"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
