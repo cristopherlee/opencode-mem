@@ -393,6 +393,8 @@ const CONFIG_TEMPLATE = `{
   //   "memoryApiUrl": "https://api.minimax.io"        // global endpoint
   //   "memoryApiKey": "<MiniMax API key>"
   //   // China endpoint: "memoryApiUrl": "https://api.minimaxi.com"
+  //   // Optional adaptive thinking for MiniMax-M3:
+  //   "memoryExtraParams": { "thinking": { "type": "adaptive" } }
 
   // Groq (OpenAI-compatible, use openai-chat provider):
   //   "memoryProvider": "openai-chat"

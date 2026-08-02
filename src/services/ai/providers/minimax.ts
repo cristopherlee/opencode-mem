@@ -32,22 +32,32 @@ export class MiniMaxProvider extends AnthropicMessagesProvider {
    *
    * MiniMax's Messages endpoint lives at `<base>/anthropic/v1/messages`. The
    * base URL is normalized so users can supply the host with or without a
-   * trailing `/anthropic` or `/anthropic/v1` suffix.
+   * trailing `/anthropic`, `/anthropic/v1`, or `/anthropic/v1/messages` suffix.
    */
   override resolveEndpoint(): string {
     let base = (this.config.apiUrl || "").trim().replace(/\/+$/, "");
     if (!base) {
       throw new Error("MiniMax provider requires a configured memoryApiUrl");
     }
-    base = base.replace(/\/anthropic\/?v1\/?$/, "/anthropic/v1");
-    base = base.replace(/\/anthropic\/?$/, "/anthropic/v1");
-    if (!/\/anthropic\/v1$/.test(base)) {
-      base = `${base}/anthropic/v1`;
-    }
-    return `${base}/messages`;
+    base = base.replace(/\/anthropic\/v1\/messages\/?$/, "");
+    base = base.replace(/\/anthropic\/v1\/?$/, "");
+    base = base.replace(/\/anthropic\/?$/, "");
+    return `${base}/anthropic/v1/messages`;
   }
 
   override sessionProviderTag(): AIProviderType {
     return "minimax";
+  }
+
+  protected override apiErrorLogLabel(): string {
+    return "MiniMax Messages API error";
+  }
+
+  protected override toolValidationErrorLogLabel(): string {
+    return "MiniMax tool response validation failed";
+  }
+
+  protected override timeoutLabel(): string {
+    return "MiniMax API request timeout";
   }
 }

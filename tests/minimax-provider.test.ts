@@ -19,12 +19,16 @@ const toolSchema: ChatCompletionTool = {
 class FakeSessionManager {
   private readonly session = { id: "session-1" };
   private readonly messages: any[] = [];
+  lastCreateSessionArgs: any;
 
-  getSession(): any {
+  getSession(sessionId?: string, provider?: string): any {
+    void sessionId;
+    void provider;
     return null;
   }
 
-  createSession(): any {
+  createSession(args: any): any {
+    this.lastCreateSessionArgs = args;
     return this.session;
   }
 
@@ -41,6 +45,24 @@ class FakeSessionManager {
   }
 }
 
+function makeProvider(
+  overrides: Record<string, unknown> = {},
+  sessionManager = new FakeSessionManager()
+) {
+  return {
+    provider: new MiniMaxProvider(
+      {
+        model: "MiniMax-M3",
+        apiUrl: "https://api.minimax.io",
+        apiKey: "test-key",
+        ...overrides,
+      },
+      sessionManager as any
+    ),
+    sessionManager,
+  };
+}
+
 describe("MiniMaxProvider", () => {
   const originalFetch = globalThis.fetch;
 
@@ -49,88 +71,61 @@ describe("MiniMaxProvider", () => {
   });
 
   it("reports the minimax provider name", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider();
     expect(provider.getProviderName()).toBe("minimax");
     expect(provider.supportsSession()).toBe(true);
   });
 
   it("resolves the global endpoint at /anthropic/v1/messages", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider();
     expect(provider.resolveEndpoint()).toBe("https://api.minimax.io/anthropic/v1/messages");
   });
 
   it("resolves the China endpoint at api.minimaxi.com", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimaxi.com",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider({ apiUrl: "https://api.minimaxi.com" });
     expect(provider.resolveEndpoint()).toBe("https://api.minimaxi.com/anthropic/v1/messages");
   });
 
   it("normalizes a base URL that already includes /anthropic/v1", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io/anthropic/v1",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider({ apiUrl: "https://api.minimax.io/anthropic/v1" });
     expect(provider.resolveEndpoint()).toBe("https://api.minimax.io/anthropic/v1/messages");
   });
 
   it("normalizes a base URL that includes /anthropic", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io/anthropic/",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider({ apiUrl: "https://api.minimax.io/anthropic/" });
+    expect(provider.resolveEndpoint()).toBe("https://api.minimax.io/anthropic/v1/messages");
+  });
+
+  it("normalizes a full /anthropic/v1/messages URL without duplicating the path", () => {
+    const { provider } = makeProvider({
+      apiUrl: "https://api.minimax.io/anthropic/v1/messages",
+    });
     expect(provider.resolveEndpoint()).toBe("https://api.minimax.io/anthropic/v1/messages");
   });
 
   it("strips a trailing slash from the base URL", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io/",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider({ apiUrl: "https://api.minimax.io/" });
     expect(provider.resolveEndpoint()).toBe("https://api.minimax.io/anthropic/v1/messages");
   });
 
   it("throws when memoryApiUrl is not configured", () => {
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
+    const { provider } = makeProvider({ apiUrl: "" });
     expect(() => provider.resolveEndpoint()).toThrow();
+  });
+
+  it("records the minimax session provider tag", async () => {
+    globalThis.fetch = (async () =>
+      ({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => "login fail",
+      }) as Response) as typeof fetch;
+
+    const { provider, sessionManager } = makeProvider();
+    await provider.executeToolCall("system", "user", toolSchema, "session-id");
+
+    expect(sessionManager.lastCreateSessionArgs?.provider).toBe("minimax");
   });
 
   it("targets /anthropic/v1/messages and authenticates with x-api-key", async () => {
@@ -147,20 +142,40 @@ describe("MiniMaxProvider", () => {
       } as Response;
     }) as typeof fetch;
 
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
-
+    const { provider } = makeProvider();
     await provider.executeToolCall("system", "user", toolSchema, "session-id");
 
     expect(capturedUrl).toBe("https://api.minimax.io/anthropic/v1/messages");
     expect(capturedHeaders?.["x-api-key"]).toBe("test-key");
     expect(capturedHeaders?.["anthropic-version"]).toBe("2023-06-01");
+  });
+
+  it("forwards adaptive thinking via memoryExtraParams", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body ?? "{}"));
+      return {
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => "login fail",
+      } as Response;
+    }) as typeof fetch;
+
+    const { provider } = makeProvider({
+      extraParams: {
+        thinking: { type: "adaptive" },
+        model: "should-not-overwrite",
+        messages: ["should-not-overwrite"],
+        tools: ["should-not-overwrite"],
+      },
+    });
+    await provider.executeToolCall("system", "user", toolSchema, "session-id");
+
+    expect(capturedBody?.thinking).toEqual({ type: "adaptive" });
+    expect(capturedBody?.model).toBe("MiniMax-M3");
+    expect(Array.isArray(capturedBody?.messages)).toBe(true);
+    expect(Array.isArray(capturedBody?.tools)).toBe(true);
   });
 
   it("extracts tool input from a MiniMax Anthropic-format response", async () => {
@@ -189,15 +204,7 @@ describe("MiniMaxProvider", () => {
       } as Response;
     }) as typeof fetch;
 
-    const provider = new MiniMaxProvider(
-      {
-        model: "MiniMax-M3",
-        apiUrl: "https://api.minimax.io",
-        apiKey: "test-key",
-      },
-      new FakeSessionManager() as any
-    );
-
+    const { provider } = makeProvider();
     const result = await provider.executeToolCall("system", "user", toolSchema, "session-id");
 
     expect(capturedBody?.model).toBe("MiniMax-M3");

@@ -1,4 +1,4 @@
-import { BaseAIProvider, type ToolCallResult } from "./base-provider.js";
+import { applySafeExtraParams, BaseAIProvider, type ToolCallResult } from "./base-provider.js";
 import { AISessionManager } from "../session/ai-session-manager.js";
 import { ToolSchemaConverter, type ChatCompletionTool } from "../tools/tool-schema.js";
 import type { AIProviderType } from "../session/session-types.js";
@@ -136,13 +136,17 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
       try {
         const tool = ToolSchemaConverter.toAnthropic(toolSchema);
 
-        const requestBody = {
+        const requestBody: Record<string, unknown> = {
           model: this.config.model,
           max_tokens: this.config.maxTokens ?? 4096,
           system: systemPrompt,
           messages,
           tools: [tool],
         };
+
+        if (this.config.extraParams) {
+          applySafeExtraParams(requestBody, this.config.extraParams);
+        }
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
