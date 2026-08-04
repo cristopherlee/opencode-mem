@@ -18,7 +18,6 @@ import { tursoVectorSearch } from "./turso/vector-search.js";
 import { withSqliteFileLockRetry } from "./turso/sqlite-handle-release.js";
 import { log } from "./logger.js";
 import {
-  normalizeProjectPath,
   shardInventoryService,
   type ResolveMigrationSourceOptions,
   type ResolvedMigrationSource,
@@ -362,10 +361,7 @@ export class ShardPathMigrationService {
       // recoverable memory migration.
       if (source.group.projectPath && target.projectPath) {
         try {
-          await userPromptManager.updateProjectPath(
-            normalizeProjectPath(source.group.projectPath),
-            normalizeProjectPath(target.projectPath)
-          );
+          await userPromptManager.updateProjectPath(source.group.projectPath, target.projectPath);
         } catch (error) {
           log("Path migration prompt metadata update failed", { error: String(error) });
         }

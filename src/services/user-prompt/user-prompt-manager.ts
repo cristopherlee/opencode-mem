@@ -373,10 +373,13 @@ export class UserPromptManager {
       return 0;
     }
     const db = await this.ready();
-    return db.run(`UPDATE user_prompts SET project_path = ? WHERE project_path = ?`, [
-      newProjectPath,
-      oldProjectPath,
-    ]);
+    const normalizedOldPath = oldProjectPath.replace(/\\/g, "/");
+    return db.run(
+      `UPDATE user_prompts
+       SET project_path = ?
+       WHERE REPLACE(project_path, '\\', '/') = ?`,
+      [newProjectPath, normalizedOldPath]
+    );
   }
 
   private rowToPrompt(row: Record<string, unknown>): UserPrompt {

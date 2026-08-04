@@ -426,4 +426,26 @@ describe("shard path migration", () => {
     expect(await tursoShardManager.getAllShards("project", oldHash)).toHaveLength(1);
     expect(await tursoShardManager.getAllShards("project", newHash)).toHaveLength(0);
   });
+
+  it("updates stored Windows prompt paths using separator-independent matching", async () => {
+    await createProjects();
+    const { userPromptManager } =
+      await import("../src/services/user-prompt/user-prompt-manager.js");
+    const promptId = await userPromptManager.savePrompt(
+      "windows-session",
+      "windows-message",
+      "C:\\workspace\\old-project",
+      "Windows path prompt"
+    );
+
+    const updated = await userPromptManager.updateProjectPath(
+      "C:/workspace/old-project",
+      "C:\\workspace\\new-project"
+    );
+
+    expect(updated).toBe(1);
+    expect((await userPromptManager.getPromptById(promptId))?.projectPath).toBe(
+      "C:\\workspace\\new-project"
+    );
+  });
 });
