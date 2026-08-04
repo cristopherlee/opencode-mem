@@ -368,6 +368,17 @@ export class UserPromptManager {
     return rows.map((row) => this.rowToPrompt(row));
   }
 
+  async updateProjectPath(oldProjectPath: string, newProjectPath: string): Promise<number> {
+    if (!oldProjectPath || !newProjectPath || oldProjectPath === newProjectPath) {
+      return 0;
+    }
+    const db = await this.ready();
+    return db.run(`UPDATE user_prompts SET project_path = ? WHERE project_path = ?`, [
+      newProjectPath,
+      oldProjectPath,
+    ]);
+  }
+
   private rowToPrompt(row: Record<string, unknown>): UserPrompt {
     return {
       id: String(row.id),

@@ -319,6 +319,68 @@ export class LocalMemoryClient {
     }
   }
 
+  async ensureStorageReady(): Promise<void> {
+    await this.initialize();
+  }
+
+  async listShards(currentDirectory: string) {
+    try {
+      await this.initialize();
+      const { shardInventoryService } = await import("./shard-inventory-service.js");
+      return await shardInventoryService.listShards(currentDirectory);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("listShards: error", { error: errorMessage });
+      return { success: false as const, error: errorMessage };
+    }
+  }
+
+  async migrateProjectPath(options: {
+    currentDirectory: string;
+    fromPath?: string;
+    fromHash?: string;
+    dryRun?: boolean;
+    allowLinkedSource?: boolean;
+  }) {
+    try {
+      await this.initialize();
+      const { shardPathMigrationService } = await import("./shard-path-migration-service.js");
+      return await shardPathMigrationService.migrate(options);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("migrateProjectPath: error", { error: errorMessage });
+      return { success: false as const, dryRun: Boolean(options.dryRun), error: errorMessage };
+    }
+  }
+
+  async exportMemories(currentDirectory: string, outputPath: string) {
+    try {
+      await this.initialize();
+      const { memoryPortabilityService } = await import("./memory-portability-service.js");
+      return await memoryPortabilityService.exportMemories({ currentDirectory, outputPath });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("exportMemories: error", { error: errorMessage });
+      return { success: false as const, error: errorMessage };
+    }
+  }
+
+  async importMemories(currentDirectory: string, inputPath: string, dryRun?: boolean) {
+    try {
+      await this.initialize();
+      const { memoryPortabilityService } = await import("./memory-portability-service.js");
+      return await memoryPortabilityService.importMemories({
+        currentDirectory,
+        inputPath,
+        dryRun,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("importMemories: error", { error: errorMessage });
+      return { success: false as const, dryRun: Boolean(dryRun), error: errorMessage };
+    }
+  }
+
   async searchMemoriesBySessionID(sessionID: string, containerTag: string, limit: number = 10) {
     try {
       await this.initialize();

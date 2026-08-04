@@ -115,7 +115,7 @@ export class TursoShardManager {
     ]);
   }
 
-  private getShardPath(scope: "user" | "project", scopeHash: string, shardIndex: number): string {
+  getShardPath(scope: "user" | "project", scopeHash: string, shardIndex: number): string {
     assertSafeScopeHash(scopeHash);
     const scopeDir = resolve(CONFIG.storagePath, `${scope}s`);
     const fullPath = resolve(join(scopeDir, `${scope}_${scopeHash}_shard_${shardIndex}.db`));
@@ -517,14 +517,24 @@ export class TursoShardManager {
     await metadataDb.run(`DELETE FROM shards WHERE id = ?`, [shardId]);
   }
 
-  async archiveShard(shardId: number, reason: string): Promise<string | null> {
+  async archiveShard(
+    shardId: number,
+    reason: string,
+    archivePathOverride?: string
+  ): Promise<string | null> {
     const metadataDb = await this.ensureInitialized();
     const row = await metadataDb.get(`SELECT * FROM shards WHERE id = ?`, [shardId]);
     if (!row) return null;
 
     const fullPath = this.resolveStoredPath(String(row.db_path), String(row.scope));
     await tursoConnectionManager.closeConnection(fullPath);
-    const archivePath = `${fullPath}.${reason}-${process.pid}-${Date.now()}.bak`;
+    const archivePath =
+      archivePathOverride ?? `${fullPath}.${reason}-${process.pid}-${Date.now()}.bak`;
+    const scopeDir = resolve(CONFIG.storagePath, `${String(row.scope)}s`);
+    const archiveRelativePath = relative(scopeDir, resolve(archivePath));
+    if (archiveRelativePath.startsWith("..") || archiveRelativePath.includes("..")) {
+      throw new Error(`Archive path escapes storage directory: ${archivePath}`);
+    }
 
     if (existsSync(fullPath)) {
       await withSqliteFileLockRetry(() => renameSync(fullPath, archivePath));
@@ -538,6 +548,44 @@ export class TursoShardManager {
       throw error;
     }
     return existsSync(archivePath) ? archivePath : null;
+  }
+
+  /**
+   * Reassign a registered shard to a new scope hash and on-disk filename.
+   * Caller must close the DB connection and rename the file before calling this.
+   */
+  async reassignShardScope(
+    shardId: number,
+    newScopeHash: string,
+    newDbPath: string,
+    vectorCount: number,
+    isActive: boolean
+  ): Promise<ShardInfo> {
+    assertSafeScopeHash(newScopeHash);
+    const metadataDb = await this.ensureInitialized();
+    const row = await metadataDb.get(`SELECT * FROM shards WHERE id = ?`, [shardId]);
+    if (!row) {
+      throw new Error(`Shard ${shardId} not found in metadata registry`);
+    }
+
+    const scope = String(row.scope) as "user" | "project";
+    const shardIndex = Number(row.shard_index);
+    const storedPath = join(`${scope}s`, basename(newDbPath)).replace(/\\/g, "/");
+
+    await metadataDb.run(
+      `
+      UPDATE shards
+      SET scope_hash = ?, db_path = ?, vector_count = ?, is_active = ?
+      WHERE id = ?
+    `,
+      [newScopeHash, storedPath, vectorCount, isActive ? 1 : 0, shardId]
+    );
+
+    const updated = await metadataDb.get(`SELECT * FROM shards WHERE id = ?`, [shardId]);
+    if (!updated) {
+      throw new Error(`Failed to reassign shard ${shardId}`);
+    }
+    return this.rowToShardInfo(updated);
   }
 }
 

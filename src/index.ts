@@ -467,9 +467,22 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
 
     tool: {
       memory: tool({
-        description: `Manage and query project memory (MATCH USER LANGUAGE: ${getLanguageName(CONFIG.autoCaptureLanguage || "en")}). Use 'search' with technical keywords/tags, 'add' to store knowledge, 'profile' for preferences. Search/list scope: project or all-projects.`,
+        description: `Manage and query project memory (MATCH USER LANGUAGE: ${getLanguageName(CONFIG.autoCaptureLanguage || "en")}). Use 'search' with technical keywords/tags, 'add' to store knowledge, 'profile' for preferences. Use migrate/list-shards/export/import when a project directory moves. Search/list scope: project or all-projects.`,
         args: {
-          mode: tool.schema.enum(["add", "search", "profile", "list", "forget", "help"]).optional(),
+          mode: tool.schema
+            .enum([
+              "add",
+              "search",
+              "profile",
+              "list",
+              "forget",
+              "help",
+              "migrate",
+              "list-shards",
+              "export",
+              "import",
+            ])
+            .optional(),
           content: tool.schema.string().optional(),
           query: tool.schema.string().optional(),
           tags: tool.schema.string().optional(),
@@ -477,9 +490,25 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
           memoryId: tool.schema.string().optional(),
           limit: tool.schema.number().optional(),
           scope: tool.schema.enum(["project", "all-projects"]).optional(),
+          fromPath: tool.schema.string().optional(),
+          fromHash: tool.schema.string().optional(),
+          outputPath: tool.schema.string().optional(),
+          inputPath: tool.schema.string().optional(),
+          dryRun: tool.schema.boolean().optional(),
+          allowLinkedSource: tool.schema.boolean().optional(),
         },
         async execute(args: {
-          mode?: "add" | "search" | "profile" | "list" | "forget" | "help";
+          mode?:
+            | "add"
+            | "search"
+            | "profile"
+            | "list"
+            | "forget"
+            | "help"
+            | "migrate"
+            | "list-shards"
+            | "export"
+            | "import";
           content?: string;
           query?: string;
           tags?: string;
@@ -487,6 +516,12 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
           memoryId?: string;
           limit?: number;
           scope?: MemoryScope;
+          fromPath?: string;
+          fromHash?: string;
+          outputPath?: string;
+          inputPath?: string;
+          dryRun?: boolean;
+          allowLinkedSource?: boolean;
         }) {
           if (!isConfigured()) {
             return JSON.stringify({
@@ -495,13 +530,22 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
             });
           }
 
-          const embeddingInitError = memoryClient.getEmbeddingInitError?.();
-          if (embeddingInitError) {
-            return JSON.stringify({ success: false, error: embeddingInitError });
+          const mode = args.mode || "help";
+          const needsEmbedding = !["help", "list-shards", "migrate", "export"].includes(mode);
+
+          if (needsEmbedding) {
+            const embeddingInitError = memoryClient.getEmbeddingInitError?.();
+            if (embeddingInitError) {
+              return JSON.stringify({ success: false, error: embeddingInitError });
+            }
           }
 
           try {
-            await memoryClient.warmup();
+            if (needsEmbedding) {
+              await memoryClient.warmup();
+            } else if (mode !== "help") {
+              await memoryClient.ensureStorageReady();
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return JSON.stringify({
@@ -510,7 +554,6 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
             });
           }
 
-          const mode = args.mode || "help";
           const langName = getLanguageName(CONFIG.autoCaptureLanguage || "en");
 
           try {
@@ -538,6 +581,28 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                     },
                     { command: "list", description: "List recent memories", args: ["limit?"] },
                     { command: "forget", description: "Remove memory", args: ["memoryId"] },
+                    {
+                      command: "list-shards",
+                      description: "List project memory shards and orphaned path associations",
+                      args: [],
+                    },
+                    {
+                      command: "migrate",
+                      description:
+                        "Reassociate orphaned project shards after a directory move (target must be empty)",
+                      args: ["fromPath?", "fromHash?", "dryRun?", "allowLinkedSource?"],
+                    },
+                    {
+                      command: "export",
+                      description: "Export current project memories to a portable JSON file",
+                      args: ["outputPath"],
+                    },
+                    {
+                      command: "import",
+                      description:
+                        "Import memories from a portable JSON file (re-embeds; aborts on duplicate ids)",
+                      args: ["inputPath", "dryRun?"],
+                    },
                   ],
                   tagGuidance: "Use technical keywords for search. Tags rank highest.",
                 });
@@ -701,6 +766,49 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
                   return JSON.stringify({ success: false, error: "memoryId required" });
                 const delRes = await memoryClient.deleteMemory(args.memoryId);
                 return JSON.stringify({ success: delRes.success, message: `Memory removed` });
+
+              case "list-shards": {
+                const listShardsRes = await memoryClient.listShards(directory);
+                return JSON.stringify(listShardsRes);
+              }
+
+              case "migrate": {
+                if (!args.fromPath && !args.fromHash) {
+                  return JSON.stringify({
+                    success: false,
+                    error:
+                      "fromPath or fromHash required. Run memory list-shards to discover orphaned shards.",
+                  });
+                }
+                const migrateRes = await memoryClient.migrateProjectPath({
+                  currentDirectory: directory,
+                  fromPath: args.fromPath,
+                  fromHash: args.fromHash,
+                  dryRun: args.dryRun,
+                  allowLinkedSource: args.allowLinkedSource,
+                });
+                return JSON.stringify(migrateRes);
+              }
+
+              case "export": {
+                if (!args.outputPath) {
+                  return JSON.stringify({ success: false, error: "outputPath required" });
+                }
+                const exportRes = await memoryClient.exportMemories(directory, args.outputPath);
+                return JSON.stringify(exportRes);
+              }
+
+              case "import": {
+                if (!args.inputPath) {
+                  return JSON.stringify({ success: false, error: "inputPath required" });
+                }
+                const importRes = await memoryClient.importMemories(
+                  directory,
+                  args.inputPath,
+                  args.dryRun
+                );
+                return JSON.stringify(importRes);
+              }
 
               default:
                 return JSON.stringify({ success: false, error: `Unknown mode: ${mode}` });
