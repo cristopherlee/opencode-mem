@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
-import { AlertTriangle, Loader, Menu, Plus, RefreshCw, Search, Trash, X } from "lucide-react";
+import { Loader, Menu, Plus, RefreshCw, Search, Trash, TriangleAlert, X } from "lucide-react";
 import { useMemoriesExplorer } from "@/hooks/useMemoriesExplorer";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { AiCleanupDialog } from "$lib/components/explorer/AiCleanupDialog";
@@ -131,7 +131,7 @@ export default function App() {
           <div className="mx-auto w-full max-w-6xl flex-1 space-y-4 p-4 md:p-6">
             {explorer.showAuthWarning ? (
               <Alert variant="destructive">
-                <AlertTriangle />
+                <TriangleAlert />
                 <AlertDescription>{t("auth-warning-text")}</AlertDescription>
               </Alert>
             ) : null}
@@ -222,7 +222,7 @@ export default function App() {
 
                 {explorer.migrationNeeded ? (
                   <Alert variant="destructive" className="space-y-3">
-                    <AlertTriangle />
+                    <TriangleAlert />
                     <AlertDescription className="space-y-3">
                       <p>{explorer.migrationMessage || t("migration-mismatch")}</p>
                       <label className="flex items-start gap-2 text-sm">
