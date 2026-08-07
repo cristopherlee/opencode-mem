@@ -54,6 +54,92 @@ function extractSessionTitle(response: unknown): string | undefined {
   return obj.data?.title ?? obj.title;
 }
 
+function unwrapSdkData<T>(response: unknown): T | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const obj = response as { data?: T };
+  return (obj.data ?? response) as T;
+}
+
+/**
+ * Resolve the session's active agent so compaction memory injection does not
+ * reset OpenCode to the stock "general-purpose" fallback (issue #236).
+ *
+ * Preference order:
+ * 1. session.get().agent (v2 hosts)
+ * 2. Latest non-compaction user message agent
+ * 3. Latest non-compaction / non-summary assistant mode (v1) or agent (v2)
+ */
+export async function resolveSessionAgent(
+  client: unknown,
+  sessionID: string
+): Promise<string | undefined> {
+  const sessionClient = (
+    client as {
+      session?: {
+        get?: (args: unknown) => Promise<unknown>;
+        messages?: (args: unknown) => Promise<unknown>;
+      };
+    }
+  )?.session;
+
+  if (typeof sessionClient?.get === "function") {
+    try {
+      const session = unwrapSdkData<{ agent?: string }>(
+        await sessionClient.get({ path: { id: sessionID } })
+      );
+      if (typeof session?.agent === "string" && session.agent.trim()) {
+        return session.agent.trim();
+      }
+    } catch (error) {
+      log("resolveSessionAgent: session.get failed", { sessionID, error: String(error) });
+    }
+  }
+
+  if (typeof sessionClient?.messages !== "function") {
+    return undefined;
+  }
+
+  try {
+    const messages = unwrapSdkData<
+      Array<{
+        info?: {
+          role?: string;
+          agent?: string;
+          mode?: string;
+          summary?: boolean;
+        };
+      }>
+    >(await sessionClient.messages({ path: { id: sessionID } }));
+
+    if (!Array.isArray(messages)) return undefined;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const info = messages[i]?.info;
+      if (!info) continue;
+
+      if (info.role === "user") {
+        if (typeof info.agent === "string" && info.agent.trim()) {
+          return info.agent.trim();
+        }
+        continue;
+      }
+
+      if (info.role === "assistant") {
+        if (info.summary === true || info.mode === "compaction") continue;
+        const agent =
+          (typeof info.agent === "string" && info.agent.trim()) ||
+          (typeof info.mode === "string" && info.mode.trim()) ||
+          undefined;
+        if (agent) return agent;
+      }
+    }
+  } catch (error) {
+    log("resolveSessionAgent: session.messages failed", { sessionID, error: String(error) });
+  }
+
+  return undefined;
+}
+
 async function isInternalCaptureSession(client: unknown, sessionID: string): Promise<boolean> {
   // Fast path: sessions we created ourselves (survives brief post-delete window).
   if (isTrackedInternalCaptureSession(sessionID)) {
@@ -873,12 +959,17 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
           }
 
           const memoryContext = formatMemoriesForCompaction(memoriesResult.results);
+          const agent = await resolveSessionAgent(ctx.client, sessionID);
+          if (!agent) {
+            log("Compaction: could not resolve session agent", { sessionID });
+          }
 
           await ctx.client.session.prompt({
             path: { id: sessionID },
             body: {
               parts: [{ id: `prt-compaction-${Date.now()}`, type: "text", text: memoryContext }],
               noReply: true,
+              ...(agent ? { agent } : {}),
             },
           });
 
@@ -898,6 +989,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
           log("Compaction memory injected", {
             sessionID,
             count: memoriesResult.results.length,
+            agent: agent ?? null,
           });
         } catch (error) {
           log("Compaction handler error", { error: String(error) });
