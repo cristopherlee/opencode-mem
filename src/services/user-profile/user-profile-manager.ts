@@ -417,13 +417,20 @@ export class UserProfileManager {
 
       const age = now - ((item as any).lastSeen || now);
       const ageDays = age / (24 * 60 * 60 * 1000);
-      const alpha = (item as any).alpha ?? 1;
+      const staleDays = CONFIG.userProfileStaleDays ?? 2;
+      const minEvidence = CONFIG.userProfileMinEvidenceForRetention ?? 3;
+      const evidenceCount = Array.isArray((item as any).evidence)
+        ? (item as any).evidence.length
+        : 0;
 
-      if (alpha <= 2 && ageDays > 30) {
+      // Remove inactive, low-evidence items using configured retention thresholds.
+      if (ageDays > staleDays && evidenceCount < minEvidence) {
         log("profile decay: removed stale", {
           cat: (item as any).category || (item as any).description?.substring(0, 30),
-          alpha,
+          evidenceCount,
+          minEvidence,
           ageDays: Math.round(ageDays),
+          staleDays,
         });
         hasChanges = true;
         return false;
@@ -1273,12 +1280,8 @@ export class UserProfileManager {
     const needsAlphaMigration =
       item.alpha === undefined || (item.alpha === 0.5 && item.beta === 1.5);
     if (needsAlphaMigration) {
-      const conf = item.confidence ?? 1.0;
-      if (conf >= 1.0) {
-        item.alpha = 1 + (item.frequency || 1) * 0.5;
-      } else {
-        item.alpha = conf / (1 - conf + 0.01);
-      }
+      const conf = Math.max(0, Math.min(1, item.confidence ?? 1.0));
+      item.alpha = conf / (1 - conf + 0.01);
       item.beta = 1;
     }
     item.weakAlpha = item.weakAlpha ?? 1;

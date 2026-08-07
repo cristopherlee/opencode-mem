@@ -11,6 +11,50 @@ import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
 
 let isLearningRunning = false;
 
+export function shouldRunAutomaticProfileCleanup(
+  previousPromptCount: number,
+  addedPromptCount: number,
+  interval: number = CONFIG.userProfileAutoCleanupInterval
+): boolean {
+  if (!CONFIG.userProfileAutoCleanupEnabled || !Number.isInteger(interval) || interval <= 0) {
+    return false;
+  }
+  return (
+    Math.floor(previousPromptCount / interval) <
+    Math.floor((previousPromptCount + addedPromptCount) / interval)
+  );
+}
+
+async function runAutomaticProfileCleanup(userId: string): Promise<void> {
+  try {
+    const profile = await userProfileManager.getActiveProfile(userId);
+    if (!profile) return;
+    const profileData: UserProfileData = JSON.parse(profile.profileData);
+    const itemCount =
+      profileData.preferences.length + profileData.patterns.length + profileData.workflows.length;
+    if (itemCount < 2) return;
+
+    const { aiCleanupProfile } = await import("./user-profile/ai-cleanup.js");
+    const result = await aiCleanupProfile(profileData);
+    if (result.diff.merged.length === 0 && result.diff.removed.length === 0) return;
+
+    const updated = await userProfileManager.updateProfile(
+      profile.id,
+      result.cleaned,
+      0,
+      `Automatic AI cleanup: ${result.diff.merged.length} merged, ${result.diff.removed.length} removed`
+    );
+    log("user-profile-learning: automatic cleanup complete", {
+      userId,
+      updated,
+      merged: result.diff.merged.length,
+      removed: result.diff.removed.length,
+    });
+  } catch (error) {
+    log("user-profile-learning: automatic cleanup failed", { userId, error: String(error) });
+  }
+}
+
 export async function performUserProfileLearning(
   ctx: PluginInput,
   directory: string
@@ -138,6 +182,7 @@ Rules:
     }
 
     const { raw: llmResult, merged: initialMerged } = analysisResult;
+    let cleanupPreviousPromptCount = 0;
 
     if (existingProfile) {
       let updatedProfileData = initialMerged!;
@@ -163,6 +208,7 @@ Rules:
             profileId: existingProfile.id,
           });
         }
+        cleanupPreviousPromptCount = existingProfile.totalPromptsAnalyzed;
 
         let changeSummary = generateChangeSummary(
           JSON.parse(existingProfile.profileData),
@@ -217,6 +263,10 @@ Rules:
         prompts.length
       );
       await userPromptManager.markMultipleAsUserLearningCaptured(prompts.map((p) => p.id));
+    }
+
+    if (shouldRunAutomaticProfileCleanup(cleanupPreviousPromptCount, prompts.length)) {
+      await runAutomaticProfileCleanup(userId);
     }
 
     if (CONFIG.showUserProfileToasts) {
@@ -375,6 +425,128 @@ CRITICAL: Only output observations grounded in the RECENT PROMPTS above. Write d
   return truncate(base);
 }
 
+/** Upper bound for LLM-inferred preference confidence (0–1 scale). */
+export const USER_PROFILE_LLM_CONFIDENCE_MAX = 1;
+
+/** Shared analysis schema for OpenCode structured output and external tool calls. */
+export function createUserProfileAnalysisSchema(z: typeof import("zod").z) {
+  return z.object({
+    preferences: z.array(
+      z.object({
+        category: z.string(),
+        description: z.string(),
+        confidence: z.number().min(0).max(USER_PROFILE_LLM_CONFIDENCE_MAX),
+        evidence: z.array(z.string()),
+      })
+    ),
+    patterns: z.array(
+      z.object({
+        category: z.string(),
+        description: z.string(),
+      })
+    ),
+    workflows: z.array(
+      z.object({
+        description: z.string(),
+        steps: z.array(z.string()),
+      })
+    ),
+    validations: z
+      .array(
+        z.object({
+          index: z.number(),
+          verdict: z.enum([
+            "confirmed",
+            "contradicted",
+            "no_evidence",
+            "inaccurate",
+            "oversimplified",
+          ]),
+          reason: z.string(),
+        })
+      )
+      .optional(),
+  });
+}
+
+export function createUserProfileToolSchema(existingProfile: boolean) {
+  return {
+    type: "function" as const,
+    function: {
+      name: "update_user_profile",
+      description: existingProfile
+        ? "Update existing user profile with new insights"
+        : "Create new user profile",
+      parameters: {
+        type: "object",
+        properties: {
+          preferences: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                category: { type: "string" },
+                description: { type: "string" },
+                confidence: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: USER_PROFILE_LLM_CONFIDENCE_MAX,
+                },
+                evidence: { type: "array", items: { type: "string" }, maxItems: 3 },
+              },
+              required: ["category", "description", "confidence", "evidence"],
+            },
+          },
+          patterns: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                category: { type: "string" },
+                description: { type: "string" },
+              },
+              required: ["category", "description"],
+            },
+          },
+          workflows: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                description: { type: "string" },
+                steps: { type: "array", items: { type: "string" } },
+              },
+              required: ["description", "steps"],
+            },
+          },
+          validations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                index: { type: "number" },
+                verdict: {
+                  type: "string",
+                  enum: [
+                    "confirmed",
+                    "contradicted",
+                    "no_evidence",
+                    "inaccurate",
+                    "oversimplified",
+                  ],
+                },
+                reason: { type: "string" },
+              },
+              required: ["index", "verdict", "reason"],
+            },
+          },
+        },
+        required: ["preferences", "patterns", "workflows"],
+      },
+    },
+  };
+}
+
 type AnalysisResult = { raw: UserProfileData; merged: UserProfileData | null };
 
 function applyValidations(
@@ -484,43 +656,7 @@ CRITICAL: All JSON string values MUST escape double quotes with backslash. Do NO
 Use the update_user_profile tool to save the ${existingProfile ? "updated" : "new"} profile.`;
 
       const { z } = await import("zod");
-      const schema = z.object({
-        preferences: z.array(
-          z.object({
-            category: z.string(),
-            description: z.string(),
-            confidence: z.number().min(0).max(0.5),
-            evidence: z.array(z.string()),
-          })
-        ),
-        patterns: z.array(
-          z.object({
-            category: z.string(),
-            description: z.string(),
-          })
-        ),
-        workflows: z.array(
-          z.object({
-            description: z.string(),
-            steps: z.array(z.string()),
-          })
-        ),
-        validations: z
-          .array(
-            z.object({
-              index: z.number(),
-              verdict: z.enum([
-                "confirmed",
-                "contradicted",
-                "no_evidence",
-                "inaccurate",
-                "oversimplified",
-              ]),
-              reason: z.string(),
-            })
-          )
-          .optional(),
-      });
+      const schema = createUserProfileAnalysisSchema(z);
 
       log("user-profile-learning: calling LLM", { contextLen: context.length });
 
@@ -589,77 +725,7 @@ CRITICAL: All JSON string values MUST escape double quotes with backslash. Do NO
 
 Use the update_user_profile tool to save the ${existingProfile ? "updated" : "new"} profile.`;
 
-  const toolSchema = {
-    type: "function" as const,
-    function: {
-      name: "update_user_profile",
-      description: existingProfile
-        ? "Update existing user profile with new insights"
-        : "Create new user profile",
-      parameters: {
-        type: "object",
-        properties: {
-          preferences: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                category: { type: "string" },
-                description: { type: "string" },
-                confidence: { type: "number", minimum: 0, maximum: 0.5 },
-                evidence: { type: "array", items: { type: "string" }, maxItems: 3 },
-              },
-              required: ["category", "description", "confidence", "evidence"],
-            },
-          },
-          patterns: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                category: { type: "string" },
-                description: { type: "string" },
-              },
-              required: ["category", "description"],
-            },
-          },
-          workflows: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                description: { type: "string" },
-                steps: { type: "array", items: { type: "string" } },
-              },
-              required: ["description", "steps"],
-            },
-          },
-          validations: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                index: { type: "number" },
-                verdict: {
-                  type: "string",
-                  enum: [
-                    "confirmed",
-                    "contradicted",
-                    "no_evidence",
-                    "inaccurate",
-                    "oversimplified",
-                  ],
-                },
-                reason: { type: "string" },
-              },
-              required: ["index", "verdict", "reason"],
-            },
-          },
-        },
-        required: ["preferences", "patterns", "workflows"],
-      },
-    },
-  };
+  const toolSchema = createUserProfileToolSchema(Boolean(existingProfile));
 
   const result = await provider.executeToolCall(
     systemPrompt,

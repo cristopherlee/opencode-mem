@@ -42,6 +42,7 @@ interface OpenCodeMemConfig {
   autoCaptureMaxIterations?: number;
   autoCaptureIterationTimeout?: number;
   autoCaptureMaxRetries?: number;
+  autoCaptureMaxContextBytes?: number;
   autoCaptureLanguage?: string;
   memoryProvider?: "openai-chat" | "openai-responses" | "anthropic" | "minimax";
   memoryModel?: string;
@@ -81,6 +82,8 @@ interface OpenCodeMemConfig {
   userProfileCentroidDriftThreshold?: number;
   userProfileEmbeddingMinDescriptionLength?: number;
   userProfileMinEvidenceForRetention?: number;
+  userProfileAutoCleanupEnabled?: boolean;
+  userProfileAutoCleanupInterval?: number;
   userProfileValidationEnabled?: boolean;
   showAutoCaptureToasts?: boolean;
   showUserProfileToasts?: boolean;
@@ -152,6 +155,7 @@ const DEFAULTS: Required<
   autoCaptureMaxIterations: 5,
   autoCaptureIterationTimeout: 30000,
   autoCaptureMaxRetries: 3,
+  autoCaptureMaxContextBytes: 131072,
   aiSessionRetentionDays: 7,
   webServerEnabled: true,
   webServerPort: 4747,
@@ -179,6 +183,8 @@ const DEFAULTS: Required<
   userProfileCentroidDriftThreshold: 0.65,
   userProfileEmbeddingMinDescriptionLength: 5,
   userProfileMinEvidenceForRetention: 3,
+  userProfileAutoCleanupEnabled: true,
+  userProfileAutoCleanupInterval: 100,
   userProfileValidationEnabled: false,
   showAutoCaptureToasts: true,
   showUserProfileToasts: true,
@@ -410,6 +416,11 @@ const CONFIG_TEMPLATE = `{
 
   // Maximum number of times to retry capturing a prompt if it fails (due to network, API errors, etc.)
   "autoCaptureMaxRetries": 3,
+
+  // Maximum UTF-8 bytes for the auto-capture markdown context sent to the summary model.
+  // Prevents HTTP 400 context overflows on models with ~131K token windows (e.g. Groq Llama).
+  // Rough guide: tokens ≈ bytes / 4 for mixed code/prose.
+  "autoCaptureMaxContextBytes": 131072,
    
   // Days to keep AI session history before cleanup
   "aiSessionRetentionDays": 7,
@@ -487,6 +498,11 @@ const CONFIG_TEMPLATE = `{
   // Minimum evidence count for a preference/pattern to survive confidence decay
   // Items confirmed fewer times are more likely to be pruned when confidence decays
   "userProfileMinEvidenceForRetention": 3,
+
+  // Periodically merge duplicate or irrelevant profile items with the configured AI provider
+  "userProfileAutoCleanupEnabled": true,
+  // Number of analyzed user prompts between automatic AI cleanup runs
+  "userProfileAutoCleanupInterval": 100,
 
   // Enable LLM validation of existing preferences against recent behavior.
   // When enabled, each analysis round checks if top-5 preferences still match recent prompts.
@@ -568,11 +584,23 @@ function getEmbeddingDimensions(model: string): number {
   return dimensionMap[model] || 768;
 }
 
+export function normalizeAutoCaptureMaxContextBytes(value: number): number {
+  if (!Number.isInteger(value) || value < 16384 || value > 16 * 1024 * 1024) {
+    throw new Error(`Invalid autoCaptureMaxContextBytes config: ${value}`);
+  }
+  return value;
+}
+
 function buildConfig(fileConfig: OpenCodeMemConfig) {
   const memoryApiKey = resolveSecretValue(fileConfig.memoryApiKey);
   const embeddingDimensions =
     fileConfig.embeddingDimensions ??
     getEmbeddingDimensions(fileConfig.embeddingModel ?? DEFAULTS.embeddingModel);
+  const autoCaptureMaxContextBytes = normalizeAutoCaptureMaxContextBytes(
+    fileConfig.autoCaptureMaxContextBytes ?? DEFAULTS.autoCaptureMaxContextBytes
+  );
+  const userProfileAutoCleanupInterval =
+    fileConfig.userProfileAutoCleanupInterval ?? DEFAULTS.userProfileAutoCleanupInterval;
 
   if (
     !Number.isInteger(embeddingDimensions) ||
@@ -580,6 +608,11 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     embeddingDimensions > 65536
   ) {
     throw new Error(`Invalid embeddingDimensions config: ${embeddingDimensions}`);
+  }
+  if (!Number.isInteger(userProfileAutoCleanupInterval) || userProfileAutoCleanupInterval <= 0) {
+    throw new Error(
+      `Invalid userProfileAutoCleanupInterval config: ${userProfileAutoCleanupInterval}`
+    );
   }
 
   return {
@@ -605,6 +638,7 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     autoCaptureIterationTimeout:
       fileConfig.autoCaptureIterationTimeout ?? DEFAULTS.autoCaptureIterationTimeout,
     autoCaptureMaxRetries: fileConfig.autoCaptureMaxRetries ?? DEFAULTS.autoCaptureMaxRetries,
+    autoCaptureMaxContextBytes,
     autoCaptureLanguage: fileConfig.autoCaptureLanguage,
     memoryProvider: (fileConfig.memoryProvider ?? "openai-chat") as
       "openai-chat" | "openai-responses" | "anthropic" | "minimax",
@@ -677,6 +711,9 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
       DEFAULTS.userProfileEmbeddingMinDescriptionLength,
     userProfileMinEvidenceForRetention:
       fileConfig.userProfileMinEvidenceForRetention ?? DEFAULTS.userProfileMinEvidenceForRetention,
+    userProfileAutoCleanupEnabled:
+      fileConfig.userProfileAutoCleanupEnabled ?? DEFAULTS.userProfileAutoCleanupEnabled,
+    userProfileAutoCleanupInterval,
     userProfileValidationEnabled:
       fileConfig.userProfileValidationEnabled ?? DEFAULTS.userProfileValidationEnabled,
     userProfileStaleDays: fileConfig.userProfileStaleDays ?? DEFAULTS.userProfileStaleDays,
