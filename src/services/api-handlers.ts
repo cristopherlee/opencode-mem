@@ -1024,6 +1024,7 @@ const pendingCleanups = new Map<
     diff: any;
     allMergedIds: string[][];
     allRemovedIds: string[];
+    includeIds?: string[];
     expiresAt: number;
   }
 >();
@@ -1053,8 +1054,9 @@ export async function handleAICleanup(
 
     let indexed;
     let result;
-    if (includeIds && includeIds.length > 0) {
-      indexed = filterProfileForCleanup(profileData, includeIds);
+    const scopedIds = includeIds && includeIds.length > 0 ? includeIds : undefined;
+    if (scopedIds) {
+      indexed = filterProfileForCleanup(profileData, scopedIds);
       result = await aiCleanupProfileFromIndexed(indexed);
     } else {
       result = await aiCleanupProfile(profileData);
@@ -1066,6 +1068,7 @@ export async function handleAICleanup(
       diff: result.diff,
       allMergedIds: (result.diff?.merged || []).map((m: any) => m.ids || []),
       allRemovedIds: (result.diff?.removed || []).map((r: any) => r.id),
+      includeIds: scopedIds,
       expiresAt: Date.now() + 30 * 60 * 1000,
     });
 
@@ -1081,6 +1084,107 @@ export async function handleAICleanup(
     log("handleAICleanup: error", { error: String(error) });
     return { success: false, error: String(error) };
   }
+}
+
+/**
+ * Merge an AI-cleanup result into a full profile.
+ * When includeIds is set, only scoped items are mutated; everything else is preserved.
+ */
+export function mergeCleanupIntoProfile(args: {
+  currentProfile: UserProfileData;
+  oldProfileData: UserProfileData;
+  cleanedData: UserProfileData;
+  includeIds?: string[];
+  acceptedMerged?: string[][];
+  acceptedRemoved?: string[];
+  allMergedIds?: string[][];
+  allRemovedIds?: string[];
+  /** True when the client sent acceptance arrays (even if empty = reject all). */
+  explicitAcceptance?: boolean;
+}): UserProfileData {
+  const {
+    currentProfile,
+    oldProfileData,
+    cleanedData,
+    includeIds,
+    acceptedMerged = [],
+    acceptedRemoved = [],
+    allMergedIds = [],
+    allRemovedIds = [],
+    explicitAcceptance = false,
+  } = args;
+
+  // Start from cleaned data, then restore any rejected removals/merges.
+  const scopedResult: UserProfileData = {
+    preferences: [...cleanedData.preferences],
+    patterns: [...cleanedData.patterns],
+    workflows: [...cleanedData.workflows],
+  };
+
+  if (explicitAcceptance) {
+    for (const id of acceptedRemoved) {
+      const desc = findItemDesc(oldProfileData, id);
+      if (desc) removeByDesc(scopedResult, desc, itemTypeFromId(id));
+    }
+
+    for (const ids of acceptedMerged) {
+      for (let i = 1; i < ids.length; i++) {
+        const srcDesc = findItemDesc(oldProfileData, ids[i] ?? "");
+        if (srcDesc) removeByDesc(scopedResult, srcDesc, itemTypeFromId(ids[i] ?? ""));
+      }
+    }
+
+    const acceptedTargetIds = new Set(acceptedMerged.map((g) => g[0]));
+    for (const groupIds of allMergedIds) {
+      if (groupIds.length <= 1) continue;
+      if (acceptedTargetIds.has(groupIds[0])) continue;
+      for (let i = 1; i < groupIds.length; i++) {
+        const srcId = groupIds[i] ?? "";
+        if (!srcId) continue;
+        pushItemFromProfile(scopedResult, oldProfileData, srcId);
+      }
+    }
+
+    const acceptedRemovedSet = new Set(acceptedRemoved);
+    for (const removedId of allRemovedIds) {
+      if (acceptedRemovedSet.has(removedId)) continue;
+      pushItemFromProfile(scopedResult, oldProfileData, removedId);
+    }
+  }
+
+  // Full-profile cleanup: cleaned (+ acceptance) replaces the whole profile.
+  if (!includeIds || includeIds.length === 0) {
+    return scopedResult;
+  }
+
+  // Partial selection: mutate only the analyzed scope inside the current full profile.
+  const result: UserProfileData = {
+    preferences: [...currentProfile.preferences],
+    patterns: [...currentProfile.patterns],
+    workflows: [...currentProfile.workflows],
+  };
+
+  for (const id of includeIds) {
+    const desc = findItemDesc(oldProfileData, id);
+    if (desc) removeByDesc(result, desc, itemTypeFromId(id));
+  }
+
+  result.preferences.push(...scopedResult.preferences);
+  result.patterns.push(...scopedResult.patterns);
+  result.workflows.push(...scopedResult.workflows);
+
+  return result;
+}
+
+function pushItemFromProfile(target: UserProfileData, source: UserProfileData, id: string): void {
+  const desc = findItemDesc(source, id);
+  if (!desc) return;
+  const srcItem = findItemByDesc(source, desc);
+  if (!srcItem) return;
+  const { id: _id, ...rest } = srcItem as any;
+  if (id.startsWith("pref_")) target.preferences.push(rest);
+  else if (id.startsWith("pat_")) target.patterns.push(rest);
+  else if (id.startsWith("wf_")) target.workflows.push(rest);
 }
 
 export async function handleApplyCleanup(userId?: string, body?: any): Promise<ApiResponse<any>> {
@@ -1110,88 +1214,35 @@ export async function handleApplyCleanup(userId?: string, body?: any): Promise<A
     }
 
     const cleanedData = body?.profile || pending.cleaned;
-    const acceptedMerged: string[][] = body?.acceptedMerged || [];
-    const acceptedRemoved: string[] = body?.acceptedRemoved || [];
+    const acceptedMerged: string[][] = Array.isArray(body?.acceptedMerged)
+      ? body.acceptedMerged
+      : [];
+    const acceptedRemoved: string[] = Array.isArray(body?.acceptedRemoved)
+      ? body.acceptedRemoved
+      : [];
+    const explicitAcceptance =
+      Array.isArray(body?.acceptedMerged) || Array.isArray(body?.acceptedRemoved);
+    const existingData: UserProfileData = JSON.parse(profile.profileData);
 
-    // Partial application: start from cleaned data (which has shrunk descriptions)
-    // and only apply removals for items the user unchecked.
-    if (acceptedMerged.length > 0 || acceptedRemoved.length > 0) {
-      const existingData: UserProfileData = JSON.parse(profile.profileData);
-      const result: UserProfileData = {
-        preferences: [...cleanedData.preferences],
-        patterns: [...cleanedData.patterns],
-        workflows: [...cleanedData.workflows],
-      };
+    const result = mergeCleanupIntoProfile({
+      currentProfile: existingData,
+      oldProfileData: pending.oldProfileData,
+      cleanedData,
+      includeIds: pending.includeIds,
+      acceptedMerged,
+      acceptedRemoved,
+      allMergedIds: pending.allMergedIds,
+      allRemovedIds: pending.allRemovedIds,
+      explicitAcceptance,
+    });
 
-      // Remove items the user chose NOT to merge (revert to old descriptions)
-      for (const id of acceptedRemoved) {
-        const desc = findItemDesc(pending.oldProfileData, id);
-        if (desc) removeByDesc(result, desc, itemTypeFromId(id));
-      }
-
-      // For merges: just remove the source items; target is already in cleaned
-      for (const ids of acceptedMerged) {
-        for (let i = 1; i < ids.length; i++) {
-          const srcDesc = findItemDesc(pending.oldProfileData, ids[i] ?? "");
-          if (srcDesc) removeByDesc(result, srcDesc, itemTypeFromId(ids[i] ?? ""));
-        }
-      }
-
-      // Restore source items from unapproved merges
-      const acceptedTargetIds = new Set(acceptedMerged.map((g) => g[0]));
-      for (const groupIds of pending.allMergedIds || []) {
-        if (groupIds.length <= 1) continue;
-        if (acceptedTargetIds.has(groupIds[0])) continue;
-        for (let i = 1; i < groupIds.length; i++) {
-          const srcId = groupIds[i] ?? "";
-          if (!srcId) continue;
-          const srcDesc = findItemDesc(pending.oldProfileData, srcId);
-          if (!srcDesc) continue;
-          const srcItem = findItemByDesc(pending.oldProfileData, srcDesc);
-          if (srcItem) {
-            const { id: _id, ...rest } = srcItem as any;
-            if (srcId.startsWith("pref_")) result.preferences.push(rest);
-            else if (srcId.startsWith("pat_")) result.patterns.push(rest);
-            else if (srcId.startsWith("wf_")) result.workflows.push(rest);
-          }
-        }
-      }
-
-      // Restore items from unapproved removals
-      const acceptedRemovedSet = new Set(acceptedRemoved);
-      for (const removedId of pending.allRemovedIds || []) {
-        if (acceptedRemovedSet.has(removedId)) continue;
-        const desc = findItemDesc(pending.oldProfileData, removedId);
-        if (!desc) continue;
-        const srcItem = findItemByDesc(pending.oldProfileData, desc);
-        if (srcItem) {
-          const { id: _id, ...rest } = srcItem as any;
-          if (removedId.startsWith("pref_")) result.preferences.push(rest);
-          else if (removedId.startsWith("pat_")) result.patterns.push(rest);
-          else if (removedId.startsWith("wf_")) result.workflows.push(rest);
-        }
-      }
-
-      const success = await userProfileManager.updateProfile(
-        profile.id,
-        result,
-        0,
-        "AI cleanup applied (partial)"
-      );
-      if (!success)
-        return { success: false, error: "Profile was modified by another session. Please retry." };
-      pendingCleanups.delete(targetUserId);
-      return {
-        success: true,
-        data: { message: "Partial cleanup applied", version: profile.version + 1 },
-      };
-    }
+    const partial = (pending.includeIds && pending.includeIds.length > 0) || explicitAcceptance;
 
     const success = await userProfileManager.updateProfile(
       profile.id,
-      cleanedData,
+      result,
       0,
-      "AI cleanup applied"
+      partial ? "AI cleanup applied (partial)" : "AI cleanup applied"
     );
 
     if (!success) {
@@ -1202,7 +1253,10 @@ export async function handleApplyCleanup(userId?: string, body?: any): Promise<A
 
     return {
       success: true,
-      data: { message: "Cleanup applied successfully", version: profile.version + 1 },
+      data: {
+        message: partial ? "Partial cleanup applied" : "Cleanup applied successfully",
+        version: profile.version + 1,
+      },
     };
   } catch (error) {
     log("handleApplyCleanup: error", { error: String(error) });

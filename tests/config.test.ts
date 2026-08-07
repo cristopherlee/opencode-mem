@@ -104,6 +104,8 @@ describe("config", () => {
       expect(typeof CONFIG.userProfileDisplayWorkflows).toBe("number");
       expect(typeof CONFIG.userProfileConfidenceDecayDays).toBe("number");
       expect(typeof CONFIG.userProfileChangelogRetentionCount).toBe("number");
+      expect(CONFIG.userProfileStaleDays).toBe(2);
+      expect(CONFIG.userProfileMinEvidenceForRetention).toBe(3);
     });
 
     it("should have toast settings as booleans", () => {
