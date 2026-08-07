@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { mergeCleanupIntoProfile } from "../src/services/api-handlers.js";
+import { rebuildProfileUsing } from "../src/services/user-profile/ai-cleanup.js";
 import type { UserProfileData } from "../src/services/user-profile/types.js";
 
 function pref(description: string, category = "style") {
@@ -185,5 +186,49 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       "outside",
       "duplicate-cleaned",
     ]);
+  });
+
+  it("restores a rejected merge without duplicating items whose derived metadata changed", () => {
+    const oldProfile = baseProfile(["duplicate", "duplicate", "outside"]);
+    oldProfile.preferences[1]!.centroid = [0.1, 0.2];
+    const currentProfile = structuredClone(oldProfile);
+    currentProfile.preferences[1]!.centroid = undefined;
+    const cleaned = baseProfile(["duplicate"]);
+
+    const result = mergeCleanupIntoProfile({
+      currentProfile,
+      oldProfileData: oldProfile,
+      cleanedData: cleaned,
+      includeIds: ["pref_0", "pref_1"],
+      acceptedMerged: [],
+      acceptedRemoved: [],
+      allMerged: [{ ids: ["pref_0", "pref_1"], result: "duplicate" }],
+      allRemovedIds: [],
+      explicitAcceptance: true,
+    });
+
+    expect(result.preferences).toHaveLength(3);
+    expect(result.preferences.filter((p) => p.description === "duplicate")).toHaveLength(2);
+    expect(result.preferences.map((p) => p.description)).toContain("outside");
+  });
+});
+
+describe("rebuildProfileUsing (#237)", () => {
+  it("does not preserve merge sources as unmentioned items", () => {
+    const target = { id: "pref_0", ...pref("duplicate"), frequency: 2, lastSeen: 1 };
+    const source = { id: "pref_1", ...pref("duplicate"), frequency: 3, lastSeen: 1 };
+    const cleanedTarget = { id: "pref_0", ...pref("duplicate"), frequency: 5, lastSeen: 1 };
+
+    const result = rebuildProfileUsing(
+      { kept: [], merged: [["pref_0", "pref_1"]], removed: [] },
+      new Map([["pref_0", cleanedTarget]]),
+      new Map([
+        ["pref_0", target],
+        ["pref_1", source],
+      ])
+    );
+
+    expect(result.preferences).toHaveLength(1);
+    expect(result.preferences[0]?.description).toBe("duplicate");
   });
 });

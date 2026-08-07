@@ -1302,11 +1302,18 @@ function removeItemFromProfile(
     "preferences" | "patterns" | "workflows"
   >;
   const items = target[itemType] as any[];
-  const sourceJson = JSON.stringify(sourceItem);
-  const index = items.findIndex((item) => JSON.stringify(item) === sourceJson);
+  const sourceKey = profileItemIdentityKey(sourceItem);
+  const index = items.findIndex((item) => profileItemIdentityKey(item) === sourceKey);
   if (index < 0) return false;
   items.splice(index, 1);
   return true;
+}
+function profileItemIdentityKey(item: any): string {
+  return JSON.stringify({
+    category: item.category ?? null,
+    description: item.description ?? null,
+    steps: Array.isArray(item.steps) ? item.steps : null,
+  });
 }
 function removeOneByDescription(profile: UserProfileData, desc: string, itemType: string): boolean {
   const items = profile[

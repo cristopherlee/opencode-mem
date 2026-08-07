@@ -374,7 +374,7 @@ function buildItemIndex(profile: IndexedProfile): Map<string, IndexedProfileItem
   return map;
 }
 
-function rebuildProfileUsing(
+export function rebuildProfileUsing(
   mapping: AIMapping,
   cleanedById: Map<string, IndexedProfileItem>,
   originalById: Map<string, IndexedProfileItem>,
@@ -522,7 +522,7 @@ function rebuildProfileUsing(
   }
   const unmentionedIds = new Set<string>();
   for (const id of allOriginalIds) {
-    if (!keptIds.has(id) && !mapping.removed.includes(id)) {
+    if (!keptIds.has(id) && !mergedSourceIds.has(id) && !mapping.removed.includes(id)) {
       unmentionedIds.add(id);
     }
   }
