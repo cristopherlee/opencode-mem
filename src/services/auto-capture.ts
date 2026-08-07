@@ -5,6 +5,7 @@ import { log } from "./logger.js";
 import { CONFIG } from "../config.js";
 import { userPromptManager, type UserPrompt } from "./user-prompt/user-prompt-manager.js";
 import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
+import { truncateToMaxBytes, utf8ByteLength } from "../utils/context-limit.js";
 
 interface ToolCallInfo {
   name: string;
@@ -13,6 +14,8 @@ interface ToolCallInfo {
 
 const MAX_TOOL_INPUT_LENGTH = 100;
 const RETRY_BASE_DELAY_MS = 2000;
+const DEFAULT_AUTO_CAPTURE_MAX_CONTEXT_BYTES = 131072;
+const CONTEXT_TRUNCATION_MARKER = "\n[... truncated to autoCaptureMaxContextBytes ...]\n";
 
 let isCaptureRunning = false;
 
@@ -293,47 +296,146 @@ async function getLatestProjectMemory(containerTag: string): Promise<string | nu
   }
 }
 
-function buildMarkdownContext(
+function fitTextResponses(textResponses: string[], maxBytes: number): string {
+  if (textResponses.length === 0 || maxBytes <= 0) return "";
+
+  const separator = "\n\n";
+  const separatorBytes = utf8ByteLength(separator);
+  const joined = textResponses.join(separator);
+  if (utf8ByteLength(joined) <= maxBytes) return joined;
+
+  // Prefer newest assistant turns; truncate older content first.
+  const kept: string[] = [];
+  let usedBytes = 0;
+
+  for (let i = textResponses.length - 1; i >= 0; i--) {
+    const response = textResponses[i] ?? "";
+    const responseBytes = utf8ByteLength(response);
+    const extraSeparator = kept.length > 0 ? separatorBytes : 0;
+    const needed = responseBytes + extraSeparator;
+
+    if (usedBytes + needed <= maxBytes) {
+      kept.unshift(response);
+      usedBytes += needed;
+      continue;
+    }
+
+    const remaining = maxBytes - usedBytes - extraSeparator;
+    if (remaining > utf8ByteLength(CONTEXT_TRUNCATION_MARKER)) {
+      kept.unshift(truncateToMaxBytes(response, remaining, CONTEXT_TRUNCATION_MARKER));
+    }
+    break;
+  }
+
+  return kept.join(separator);
+}
+
+function joinSections(sections: string[]): string {
+  return sections.join("\n");
+}
+
+/** Build auto-capture markdown context, capped to autoCaptureMaxContextBytes (UTF-8). */
+export function buildMarkdownContext(
   userPrompt: string,
   textResponses: string[],
   toolCalls: ToolCallInfo[],
-  latestMemory: string | null
+  latestMemory: string | null,
+  maxContextBytes: number = CONFIG.autoCaptureMaxContextBytes ??
+    DEFAULT_AUTO_CAPTURE_MAX_CONTEXT_BYTES
 ): string {
-  const sections: string[] = [];
-
+  const memorySections: string[] = [];
   if (latestMemory) {
-    sections.push(`## Previous Memory Context`);
-    sections.push(`---`);
-    sections.push(latestMemory);
-    sections.push(`---\n`);
+    memorySections.push(`## Previous Memory Context`);
+    memorySections.push(`---`);
+    memorySections.push(latestMemory);
+    memorySections.push(`---\n`);
   }
 
-  sections.push(`## User Request`);
-  sections.push(`---`);
-  sections.push(userPrompt);
-  sections.push(`---\n`);
-
-  if (textResponses.length > 0) {
-    sections.push(`## AI Response`);
-    sections.push(`---`);
-    sections.push(textResponses.join("\n\n"));
-    sections.push(`---\n`);
-  }
-
+  const toolsSections: string[] = [];
   if (toolCalls.length > 0) {
-    sections.push(`## Tools Used`);
-    sections.push(`---`);
+    toolsSections.push(`## Tools Used`);
+    toolsSections.push(`---`);
     for (const tool of toolCalls) {
       if (tool.input) {
-        sections.push(`- ${tool.name}(${tool.input})`);
+        toolsSections.push(`- ${tool.name}(${tool.input})`);
       } else {
-        sections.push(`- ${tool.name}`);
+        toolsSections.push(`- ${tool.name}`);
       }
     }
-    sections.push(`---\n`);
+    toolsSections.push(`---\n`);
   }
 
-  return sections.join("\n");
+  const userWrapper = ["## User Request", "---", "", "---\n"];
+  const aiWrapper =
+    textResponses.length > 0 ? ["## AI Response", "---", "", "---\n"] : ([] as string[]);
+
+  const skeletonWithoutBodies = joinSections([
+    ...memorySections,
+    ...userWrapper,
+    ...aiWrapper,
+    ...toolsSections,
+  ]);
+  const skeletonBytes = utf8ByteLength(skeletonWithoutBodies);
+
+  let userBudget = Math.max(0, maxContextBytes - skeletonBytes);
+  if (textResponses.length > 0 && userBudget > 1024) {
+    const preferredAiFloor = Math.min(4096, Math.floor(maxContextBytes * 0.25));
+    userBudget = Math.max(256, userBudget - preferredAiFloor);
+  }
+
+  const boundedUser =
+    utf8ByteLength(userPrompt) <= userBudget
+      ? userPrompt
+      : truncateToMaxBytes(userPrompt, userBudget, CONTEXT_TRUNCATION_MARKER);
+
+  const prefix = joinSections([
+    ...memorySections,
+    "## User Request",
+    "---",
+    boundedUser,
+    "---\n",
+    ...toolsSections,
+  ]);
+
+  if (textResponses.length === 0) {
+    if (utf8ByteLength(prefix) <= maxContextBytes) return prefix;
+    return truncateToMaxBytes(prefix, maxContextBytes, CONTEXT_TRUNCATION_MARKER);
+  }
+
+  // Insert AI section before tools to preserve the historical section order.
+  const prefixWithoutTools = joinSections([
+    ...memorySections,
+    "## User Request",
+    "---",
+    boundedUser,
+    "---\n",
+  ]);
+  const toolsBlock = toolsSections.length > 0 ? "\n" + joinSections(toolsSections) : "";
+  const aiWrapperBytes = utf8ByteLength(joinSections(["## AI Response", "---", "", "---\n"]));
+  const aiBudget = Math.max(
+    0,
+    maxContextBytes -
+      utf8ByteLength(prefixWithoutTools) -
+      utf8ByteLength(toolsBlock) -
+      aiWrapperBytes
+  );
+  const boundedAi = fitTextResponses(textResponses, aiBudget);
+
+  const result = joinSections([
+    ...memorySections,
+    "## User Request",
+    "---",
+    boundedUser,
+    "---\n",
+    "## AI Response",
+    "---",
+    boundedAi,
+    "---\n",
+    ...toolsSections,
+  ]);
+
+  if (utf8ByteLength(result) <= maxContextBytes) return result;
+  return truncateToMaxBytes(result, maxContextBytes, CONTEXT_TRUNCATION_MARKER);
 }
 
 async function generateSummary(

@@ -42,6 +42,7 @@ interface OpenCodeMemConfig {
   autoCaptureMaxIterations?: number;
   autoCaptureIterationTimeout?: number;
   autoCaptureMaxRetries?: number;
+  autoCaptureMaxContextBytes?: number;
   autoCaptureLanguage?: string;
   memoryProvider?: "openai-chat" | "openai-responses" | "anthropic" | "minimax";
   memoryModel?: string;
@@ -152,6 +153,7 @@ const DEFAULTS: Required<
   autoCaptureMaxIterations: 5,
   autoCaptureIterationTimeout: 30000,
   autoCaptureMaxRetries: 3,
+  autoCaptureMaxContextBytes: 131072,
   aiSessionRetentionDays: 7,
   webServerEnabled: true,
   webServerPort: 4747,
@@ -410,6 +412,11 @@ const CONFIG_TEMPLATE = `{
 
   // Maximum number of times to retry capturing a prompt if it fails (due to network, API errors, etc.)
   "autoCaptureMaxRetries": 3,
+
+  // Maximum UTF-8 bytes for the auto-capture markdown context sent to the summary model.
+  // Prevents HTTP 400 context overflows on models with ~131K token windows (e.g. Groq Llama).
+  // Rough guide: tokens ≈ bytes / 4 for mixed code/prose.
+  "autoCaptureMaxContextBytes": 131072,
    
   // Days to keep AI session history before cleanup
   "aiSessionRetentionDays": 7,
@@ -605,6 +612,8 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     autoCaptureIterationTimeout:
       fileConfig.autoCaptureIterationTimeout ?? DEFAULTS.autoCaptureIterationTimeout,
     autoCaptureMaxRetries: fileConfig.autoCaptureMaxRetries ?? DEFAULTS.autoCaptureMaxRetries,
+    autoCaptureMaxContextBytes:
+      fileConfig.autoCaptureMaxContextBytes ?? DEFAULTS.autoCaptureMaxContextBytes,
     autoCaptureLanguage: fileConfig.autoCaptureLanguage,
     memoryProvider: (fileConfig.memoryProvider ?? "openai-chat") as
       "openai-chat" | "openai-responses" | "anthropic" | "minimax",

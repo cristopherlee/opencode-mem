@@ -88,6 +88,10 @@ describe("config", () => {
       expect(typeof CONFIG.deduplicationEnabled).toBe("boolean");
     });
 
+    it("should default autoCaptureMaxContextBytes to 131072", () => {
+      expect(CONFIG.autoCaptureMaxContextBytes).toBe(131072);
+    });
+
     it("should expose memory scope config", () => {
       const defaultScope = CONFIG.memory.defaultScope ?? "project";
       expect(["project", "all-projects"]).toContain(defaultScope);
