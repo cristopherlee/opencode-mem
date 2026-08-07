@@ -1280,12 +1280,8 @@ export class UserProfileManager {
     const needsAlphaMigration =
       item.alpha === undefined || (item.alpha === 0.5 && item.beta === 1.5);
     if (needsAlphaMigration) {
-      const conf = item.confidence ?? 1.0;
-      if (conf >= 1.0) {
-        item.alpha = 1 + (item.frequency || 1) * 0.5;
-      } else {
-        item.alpha = conf / (1 - conf + 0.01);
-      }
+      const conf = Math.max(0, Math.min(1, item.confidence ?? 1.0));
+      item.alpha = conf / (1 - conf + 0.01);
       item.beta = 1;
     }
     item.weakAlpha = item.weakAlpha ?? 1;

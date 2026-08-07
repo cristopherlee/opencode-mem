@@ -1022,16 +1022,18 @@ const pendingCleanups = new Map<
     cleaned: UserProfileData;
     oldProfileData: UserProfileData;
     diff: any;
-    allMergedIds: string[][];
+    allMerged: Array<{ ids: string[]; result: string }>;
     allRemovedIds: string[];
     includeIds?: string[];
+    profileVersion: number;
     expiresAt: number;
   }
 >();
 
 export async function handleAICleanup(
   userId?: string,
-  includeIds?: string[]
+  includeIds?: string[],
+  profileVersion?: number
 ): Promise<ApiResponse<any>> {
   try {
     const { userProfileManager } = await import("./user-profile/user-profile-manager.js");
@@ -1049,8 +1051,14 @@ export async function handleAICleanup(
     if (!profile) {
       return { success: false, error: "No profile found to clean up" };
     }
+    if (profileVersion !== undefined && profile.version !== profileVersion) {
+      return { success: false, error: "Profile changed. Reload it before running AI cleanup." };
+    }
 
     const profileData: UserProfileData = JSON.parse(profile.profileData);
+    profileData.preferences = sortProfileItems(profileData.preferences as any[], "confidence");
+    profileData.patterns = sortProfileItems(profileData.patterns as any[], "frequency");
+    profileData.workflows = sortProfileItems(profileData.workflows as any[], "frequency");
 
     let indexed;
     let result;
@@ -1066,9 +1074,10 @@ export async function handleAICleanup(
       cleaned: result.cleaned,
       oldProfileData: profileData,
       diff: result.diff,
-      allMergedIds: (result.diff?.merged || []).map((m: any) => m.ids || []),
+      allMerged: result.diff?.merged || [],
       allRemovedIds: (result.diff?.removed || []).map((r: any) => r.id),
       includeIds: scopedIds,
+      profileVersion: profile.version,
       expiresAt: Date.now() + 30 * 60 * 1000,
     });
 
@@ -1097,7 +1106,7 @@ export function mergeCleanupIntoProfile(args: {
   includeIds?: string[];
   acceptedMerged?: string[][];
   acceptedRemoved?: string[];
-  allMergedIds?: string[][];
+  allMerged?: Array<{ ids: string[]; result: string }>;
   allRemovedIds?: string[];
   /** True when the client sent acceptance arrays (even if empty = reject all). */
   explicitAcceptance?: boolean;
@@ -1109,7 +1118,7 @@ export function mergeCleanupIntoProfile(args: {
     includeIds,
     acceptedMerged = [],
     acceptedRemoved = [],
-    allMergedIds = [],
+    allMerged = [],
     allRemovedIds = [],
     explicitAcceptance = false,
   } = args;
@@ -1123,25 +1132,23 @@ export function mergeCleanupIntoProfile(args: {
 
   if (explicitAcceptance) {
     for (const id of acceptedRemoved) {
-      const desc = findItemDesc(oldProfileData, id);
-      if (desc) removeByDesc(scopedResult, desc, itemTypeFromId(id));
+      removeItemFromProfile(scopedResult, oldProfileData, id);
     }
 
     for (const ids of acceptedMerged) {
       for (let i = 1; i < ids.length; i++) {
-        const srcDesc = findItemDesc(oldProfileData, ids[i] ?? "");
-        if (srcDesc) removeByDesc(scopedResult, srcDesc, itemTypeFromId(ids[i] ?? ""));
+        removeItemFromProfile(scopedResult, oldProfileData, ids[i] ?? "");
       }
     }
 
     const acceptedTargetIds = new Set(acceptedMerged.map((g) => g[0]));
-    for (const groupIds of allMergedIds) {
+    for (const merge of allMerged) {
+      const groupIds = merge.ids;
       if (groupIds.length <= 1) continue;
       if (acceptedTargetIds.has(groupIds[0])) continue;
-      for (let i = 1; i < groupIds.length; i++) {
-        const srcId = groupIds[i] ?? "";
-        if (!srcId) continue;
-        pushItemFromProfile(scopedResult, oldProfileData, srcId);
+      removeOneByDescription(scopedResult, merge.result, itemTypeFromId(groupIds[0] ?? ""));
+      for (const id of groupIds) {
+        if (id) pushItemFromProfile(scopedResult, oldProfileData, id);
       }
     }
 
@@ -1165,8 +1172,7 @@ export function mergeCleanupIntoProfile(args: {
   };
 
   for (const id of includeIds) {
-    const desc = findItemDesc(oldProfileData, id);
-    if (desc) removeByDesc(result, desc, itemTypeFromId(id));
+    removeItemFromProfile(result, oldProfileData, id);
   }
 
   result.preferences.push(...scopedResult.preferences);
@@ -1177,9 +1183,7 @@ export function mergeCleanupIntoProfile(args: {
 }
 
 function pushItemFromProfile(target: UserProfileData, source: UserProfileData, id: string): void {
-  const desc = findItemDesc(source, id);
-  if (!desc) return;
-  const srcItem = findItemByDesc(source, desc);
+  const srcItem = findItemById(source, id);
   if (!srcItem) return;
   const { id: _id, ...rest } = srcItem as any;
   if (id.startsWith("pref_")) target.preferences.push(rest);
@@ -1212,6 +1216,10 @@ export async function handleApplyCleanup(userId?: string, body?: any): Promise<A
     if (!profile) {
       return { success: false, error: "Profile not found" };
     }
+    if (profile.version !== pending.profileVersion) {
+      pendingCleanups.delete(targetUserId);
+      return { success: false, error: "Profile changed. Run AI cleanup again." };
+    }
 
     const cleanedData = body?.profile || pending.cleaned;
     const acceptedMerged: string[][] = Array.isArray(body?.acceptedMerged)
@@ -1231,7 +1239,7 @@ export async function handleApplyCleanup(userId?: string, body?: any): Promise<A
       includeIds: pending.includeIds,
       acceptedMerged,
       acceptedRemoved,
-      allMergedIds: pending.allMergedIds,
+      allMerged: pending.allMerged,
       allRemovedIds: pending.allRemovedIds,
       explicitAcceptance,
     });
@@ -1269,36 +1277,45 @@ function itemTypeFromId(id: string): string {
   if (id.startsWith("pat_")) return "patterns";
   return "workflows";
 }
-function findItemDesc(profile: UserProfileData, id: string): string | null {
+function findItemById(profile: UserProfileData, id: string): any | null {
   if (typeof id !== "string" || !id.includes("_")) return null;
   const parts = id.split("_");
   const prefix = parts[0];
   const idx = parseInt(parts[1] || "", 10);
   if (isNaN(idx)) return null;
 
-  if (prefix === "pref") return profile.preferences[idx]?.description || null;
-  if (prefix === "pat") return profile.patterns[idx]?.description || null;
-  if (prefix === "wf") return profile.workflows[idx]?.description || null;
+  if (prefix === "pref") return profile.preferences[idx] || null;
+  if (prefix === "pat") return profile.patterns[idx] || null;
+  if (prefix === "wf") return profile.workflows[idx] || null;
 
   return null;
 }
-function findItemByDesc(profile: UserProfileData, desc: string): any | null {
-  for (const key of ["preferences", "patterns", "workflows"] as const) {
-    const found = (profile as any)[key].find((p: any) => p.description === desc);
-    if (found) return found;
-  }
-  return null;
+function removeItemFromProfile(
+  target: UserProfileData,
+  source: UserProfileData,
+  id: string
+): boolean {
+  const sourceItem = findItemById(source, id);
+  if (!sourceItem) return false;
+  const itemType = itemTypeFromId(id) as keyof Pick<
+    UserProfileData,
+    "preferences" | "patterns" | "workflows"
+  >;
+  const items = target[itemType] as any[];
+  const sourceJson = JSON.stringify(sourceItem);
+  const index = items.findIndex((item) => JSON.stringify(item) === sourceJson);
+  if (index < 0) return false;
+  items.splice(index, 1);
+  return true;
 }
-function removeByDesc(profile: UserProfileData, desc: string, itemType?: string) {
-  if (!itemType || itemType === "preferences") {
-    profile.preferences = profile.preferences.filter((p) => p.description !== desc);
-  }
-  if (!itemType || itemType === "patterns") {
-    profile.patterns = profile.patterns.filter((p) => p.description !== desc);
-  }
-  if (!itemType || itemType === "workflows") {
-    profile.workflows = profile.workflows.filter((w) => w.description !== desc);
-  }
+function removeOneByDescription(profile: UserProfileData, desc: string, itemType: string): boolean {
+  const items = profile[
+    itemType as keyof Pick<UserProfileData, "preferences" | "patterns" | "workflows">
+  ] as any[];
+  const index = items.findIndex((item) => item.description === desc);
+  if (index < 0) return false;
+  items.splice(index, 1);
+  return true;
 }
 
 export async function handleUpdateProfileItem(body?: any): Promise<ApiResponse<any>> {

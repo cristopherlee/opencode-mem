@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin";
+import { randomUUID } from "node:crypto";
 import { memoryClient } from "./client.js";
 import { getTags } from "./tags.js";
 import { log } from "./logger.js";
@@ -16,6 +17,9 @@ const MAX_TOOL_INPUT_LENGTH = 100;
 const RETRY_BASE_DELAY_MS = 2000;
 const DEFAULT_AUTO_CAPTURE_MAX_CONTEXT_BYTES = 131072;
 const CONTEXT_TRUNCATION_MARKER = "\n[... truncated to autoCaptureMaxContextBytes ...]\n";
+const SUMMARY_REQUEST_OVERHEAD_BYTES = 1024;
+const SUMMARY_OUTPUT_RESERVE_BYTES = 16384;
+const SUMMARY_ANALYSIS_SUFFIX = `Analyze this conversation. If it contains technical work (code, bugs, features, decisions), create a concise summary and relevant tags. If it's non-technical (greetings, casual chat, incomplete requests), return type="skip" with empty summary.`;
 
 let isCaptureRunning = false;
 
@@ -97,7 +101,8 @@ async function capturePrompt(
           prompt.content,
           textResponses,
           toolCalls,
-          latestMemory
+          latestMemory,
+          getAutoCaptureMarkdownBudget()
         );
 
         let summaryResult: { summary: string; type: string; tags: string[] } | null;
@@ -334,6 +339,41 @@ function joinSections(sections: string[]): string {
   return sections.join("\n");
 }
 
+export function getAutoCaptureMarkdownBudget(
+  totalRequestBytes: number = CONFIG.autoCaptureMaxContextBytes ??
+    DEFAULT_AUTO_CAPTURE_MAX_CONTEXT_BYTES
+): number {
+  const requestReserve = Math.min(24576, Math.floor(totalRequestBytes * 0.25));
+  return Math.max(4096, totalRequestBytes - requestReserve);
+}
+
+export function buildBoundedSummaryPrompt(
+  context: string,
+  systemPrompt: string,
+  schema: unknown,
+  totalRequestBytes: number = CONFIG.autoCaptureMaxContextBytes ??
+    DEFAULT_AUTO_CAPTURE_MAX_CONTEXT_BYTES
+): string {
+  const schemaBytes = utf8ByteLength(JSON.stringify(schema));
+  const outputReserve = Math.min(
+    SUMMARY_OUTPUT_RESERVE_BYTES,
+    Math.floor(totalRequestBytes * 0.125)
+  );
+  const userBudget = Math.max(
+    0,
+    totalRequestBytes -
+      utf8ByteLength(systemPrompt) -
+      schemaBytes -
+      outputReserve -
+      SUMMARY_REQUEST_OVERHEAD_BYTES
+  );
+  return truncateToMaxBytes(
+    `${context}\n\n${SUMMARY_ANALYSIS_SUFFIX}`,
+    userBudget,
+    CONTEXT_TRUNCATION_MARKER
+  );
+}
+
 /** Build auto-capture markdown context, capped to autoCaptureMaxContextBytes (UTF-8). */
 export function buildMarkdownContext(
   userPrompt: string,
@@ -442,7 +482,7 @@ async function generateSummary(
   context: string,
   sessionID: string,
   userPrompt: string,
-  prompt?: { providerId: string | null; modelId: string | null }
+  prompt?: { id?: string; providerId: string | null; modelId: string | null }
 ): Promise<{ summary: string; type: string; tags: string[] } | null> {
   // Opencode provider path (when opencodeProvider + opencodeModel configured)
   if (CONFIG.opencodeProvider && CONFIG.opencodeModel) {
@@ -509,16 +549,13 @@ FORMAT:
 SKIP if: greetings, casual chat, no code/decisions made
 CAPTURE if: code changed, bug fixed, feature added, decision made`;
 
-      const aiPrompt = `${context}
-
-Analyze this conversation. If it contains technical work (code, bugs, features, decisions), create a concise summary and relevant tags. If it's non-technical (greetings, casual chat, incomplete requests), return type="skip" with empty summary.`;
-
       const { z } = await import("zod");
       const schema = z.object({
         summary: z.string(),
         type: z.string(),
         tags: z.array(z.string()),
       });
+      const aiPrompt = buildBoundedSummaryPrompt(context, systemPrompt, z.toJSONSchema(schema));
 
       const result = await generateStructuredOutput({
         client: v2Client,
@@ -581,10 +618,6 @@ FORMAT:
 SKIP if: greetings, casual chat, no code/decisions made
 CAPTURE if: code changed, bug fixed, feature added, decision made`;
 
-  const aiPrompt = `${context}
-
-Analyze this conversation. If it contains technical work (code, bugs, features, decisions), create a concise summary and relevant tags. If it's non-technical (greetings, casual chat, incomplete requests), return type="skip" with empty summary.`;
-
   const toolSchema = {
     type: "function" as const,
     function: {
@@ -612,8 +645,15 @@ Analyze this conversation. If it contains technical work (code, bugs, features, 
       },
     },
   };
+  const aiPrompt = buildBoundedSummaryPrompt(context, systemPrompt, toolSchema);
+  const captureSessionID = `auto-capture-${prompt?.id ?? sessionID}-${randomUUID()}`;
 
-  const result = await provider.executeToolCall(systemPrompt, aiPrompt, toolSchema, sessionID);
+  const result = await provider.executeToolCall(
+    systemPrompt,
+    aiPrompt,
+    toolSchema,
+    captureSessionID
+  );
 
   if (!result.success || !result.data) {
     throw new Error(result.error || "Failed to generate summary");

@@ -15,6 +15,7 @@ const {
   hasAutoCaptureProviderConfig,
   isConfigured,
   isPlaceholderApiKey,
+  normalizeAutoCaptureMaxContextBytes,
 } = await import("../src/config.js");
 
 afterAll(() => {
@@ -92,6 +93,12 @@ describe("config", () => {
       expect(CONFIG.autoCaptureMaxContextBytes).toBe(131072);
     });
 
+    it("should reject unsafe auto-capture context budgets", () => {
+      expect(() => normalizeAutoCaptureMaxContextBytes(-1)).toThrow();
+      expect(() => normalizeAutoCaptureMaxContextBytes(1024)).toThrow();
+      expect(() => normalizeAutoCaptureMaxContextBytes(16 * 1024 * 1024 + 1)).toThrow();
+    });
+
     it("should expose memory scope config", () => {
       const defaultScope = CONFIG.memory.defaultScope ?? "project";
       expect(["project", "all-projects"]).toContain(defaultScope);
@@ -106,6 +113,8 @@ describe("config", () => {
       expect(typeof CONFIG.userProfileChangelogRetentionCount).toBe("number");
       expect(CONFIG.userProfileStaleDays).toBe(2);
       expect(CONFIG.userProfileMinEvidenceForRetention).toBe(3);
+      expect(CONFIG.userProfileAutoCleanupEnabled).toBe(true);
+      expect(CONFIG.userProfileAutoCleanupInterval).toBe(100);
     });
 
     it("should have toast settings as booleans", () => {

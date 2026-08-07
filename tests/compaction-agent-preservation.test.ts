@@ -211,6 +211,16 @@ describe("session.compacted agent preservation (#236)", () => {
     expect(result.parsed?.promptCalls).toEqual([]);
   });
 
+  it("does not inject memories when the active agent cannot be resolved", () => {
+    const result = runCompactionScenario({
+      memories: [{ memory: "remember this" }],
+      messages: [{ info: { role: "assistant", mode: "compaction", summary: true } }],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.parsed?.promptCalls).toEqual([]);
+  });
+
   it("does nothing when compaction is disabled", () => {
     const result = runCompactionScenario({
       compactionEnabled: false,

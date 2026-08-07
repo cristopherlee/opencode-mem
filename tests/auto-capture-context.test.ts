@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { buildMarkdownContext } from "../src/services/auto-capture.js";
+import {
+  buildBoundedSummaryPrompt,
+  buildMarkdownContext,
+  getAutoCaptureMarkdownBudget,
+} from "../src/services/auto-capture.js";
 import { utf8ByteLength } from "../src/utils/context-limit.js";
 
 describe("buildMarkdownContext budgeting (#232)", () => {
@@ -71,5 +75,24 @@ describe("buildMarkdownContext budgeting (#232)", () => {
     );
 
     expect(utf8ByteLength(context)).toBeLessThanOrEqual(10_000);
+  });
+
+  it("reserves request space for prompts, schemas, and model output", () => {
+    const totalBudget = 131_072;
+    const markdownBudget = getAutoCaptureMarkdownBudget(totalBudget);
+    const context = buildMarkdownContext(
+      "request",
+      ["A".repeat(totalBudget)],
+      [],
+      null,
+      markdownBudget
+    );
+    const systemPrompt = "system instructions";
+    const schema = { type: "object", properties: { summary: { type: "string" } } };
+    const userPrompt = buildBoundedSummaryPrompt(context, systemPrompt, schema, totalBudget);
+
+    expect(markdownBudget).toBeLessThan(totalBudget);
+    expect(utf8ByteLength(userPrompt)).toBeLessThan(totalBudget);
+    expect(userPrompt).toContain("truncated to autoCaptureMaxContextBytes");
   });
 });

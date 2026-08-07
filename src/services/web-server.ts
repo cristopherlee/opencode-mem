@@ -567,7 +567,9 @@ export class WebServer {
         const includeIds = Array.isArray(body.includeIds)
           ? (body.includeIds as string[])
           : undefined;
-        const result = await handleAICleanup(userId, includeIds);
+        const profileVersion =
+          typeof body.profileVersion === "number" ? body.profileVersion : undefined;
+        const result = await handleAICleanup(userId, includeIds, profileVersion);
         return this.jsonResponse(result);
       }
 

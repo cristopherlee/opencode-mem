@@ -36,7 +36,7 @@ export async function aiCleanupProfile(profileData: UserProfileData): Promise<AI
   const counters = { cleaned: 0, original: 0 };
 
   const cleaned = rebuildProfileUsing(result.mapping, cleanedById, originalById, counters);
-  const diff = generateDiff(indexed, result.mapping);
+  const diff = generateDiff(indexed, result.mapping, cleanedById);
 
   const sampleCleaned = result.profile.preferences[0];
   log("AI cleanup: rebuild done", {
@@ -85,7 +85,7 @@ export async function aiCleanupProfileFromIndexed(
   const counters = { cleaned: 0, original: 0 };
 
   const cleaned = rebuildProfileUsing(result.mapping, cleanedById, originalById, counters);
-  const diff = generateDiff(indexed, result.mapping);
+  const diff = generateDiff(indexed, result.mapping, cleanedById);
 
   log("AI cleanup: complete (filtered)", {
     totalMs: Date.now() - t0,
@@ -548,7 +548,11 @@ function rebuildProfileUsing(
   return result;
 }
 
-function generateDiff(original: IndexedProfile, mapping: AIMapping): CleanupDiff {
+function generateDiff(
+  original: IndexedProfile,
+  mapping: AIMapping,
+  cleanedById: Map<string, IndexedProfileItem>
+): CleanupDiff {
   const index = buildItemIndex(original);
 
   const diff: CleanupDiff = {
@@ -557,7 +561,7 @@ function generateDiff(original: IndexedProfile, mapping: AIMapping): CleanupDiff
       const first = group[0] ?? "";
       return {
         ids: group,
-        result: index.get(first)?.description || first,
+        result: cleanedById.get(first)?.description || index.get(first)?.description || first,
       };
     }),
     removed: mapping.removed.map((id) => ({

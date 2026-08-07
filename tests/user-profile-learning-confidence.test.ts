@@ -2,8 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 import {
   createUserProfileAnalysisSchema,
+  createUserProfileToolSchema,
+  shouldRunAutomaticProfileCleanup,
   USER_PROFILE_LLM_CONFIDENCE_MAX,
 } from "../src/services/user-memory-learning.js";
+import { UserProfileValidator } from "../src/services/ai/validators/user-profile-validator.js";
 
 describe("user-profile-learning confidence schema (#231)", () => {
   const schema = createUserProfileAnalysisSchema(z);
@@ -44,22 +47,27 @@ describe("user-profile-learning confidence schema (#231)", () => {
   });
 
   it("exposes matching JSON-schema maximum for the external tool path", () => {
-    const jsonSchema = z.toJSONSchema(schema) as {
-      properties?: {
-        preferences?: {
-          items?: {
-            properties?: {
-              confidence?: { maximum?: number; minimum?: number };
-            };
-          };
-        };
-      };
-    };
+    const jsonSchema = createUserProfileToolSchema(false).function.parameters;
 
     expect(USER_PROFILE_LLM_CONFIDENCE_MAX).toBe(1);
     expect(jsonSchema.properties?.preferences?.items?.properties?.confidence?.minimum).toBe(0);
     expect(jsonSchema.properties?.preferences?.items?.properties?.confidence?.maximum).toBe(
       USER_PROFILE_LLM_CONFIDENCE_MAX
     );
+  });
+
+  it("rejects out-of-range confidence during provider response validation", () => {
+    expect(
+      UserProfileValidator.validate({
+        ...baseProfile,
+        preferences: [{ ...baseProfile.preferences[0], confidence: 1.1 }],
+      }).valid
+    ).toBe(false);
+    expect(UserProfileValidator.validate(baseProfile).valid).toBe(true);
+  });
+
+  it("schedules automatic cleanup only when a prompt interval is crossed", () => {
+    expect(shouldRunAutomaticProfileCleanup(90, 10, 100)).toBe(true);
+    expect(shouldRunAutomaticProfileCleanup(100, 10, 100)).toBe(false);
   });
 });

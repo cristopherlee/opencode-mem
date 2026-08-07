@@ -961,7 +961,13 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
           const memoryContext = formatMemoriesForCompaction(memoriesResult.results);
           const agent = await resolveSessionAgent(ctx.client, sessionID);
           if (!agent) {
-            log("Compaction: could not resolve session agent", { sessionID });
+            log(
+              "Compaction: skipped memory injection because session agent could not be resolved",
+              {
+                sessionID,
+              }
+            );
+            return;
           }
 
           await ctx.client.session.prompt({
@@ -969,7 +975,7 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
             body: {
               parts: [{ id: `prt-compaction-${Date.now()}`, type: "text", text: memoryContext }],
               noReply: true,
-              ...(agent ? { agent } : {}),
+              agent,
             },
           });
 

@@ -130,4 +130,27 @@ describe("user profile decay (#237)", () => {
     // 4 evidence < 5 and age > 1 day → removed (not the old hardcoded 30-day/alpha gate)
     expect(data.preferences).toHaveLength(0);
   });
+
+  it("migrates confidence 1 continuously instead of dropping it to 0.6", async () => {
+    const { mgr, CONFIG } = await makeManager();
+    CONFIG.userProfileStaleDays = 2;
+    CONFIG.userProfileMinEvidenceForRetention = 3;
+
+    const { data } = mgr.decayInMemory({
+      preferences: [
+        {
+          category: "style",
+          description: "maximum confidence",
+          confidence: 1,
+          evidence: ["a", "b", "c"],
+          frequency: 1,
+          lastSeen: Date.now(),
+        },
+      ],
+      patterns: [],
+      workflows: [],
+    });
+
+    expect(data.preferences[0]?.confidence).toBeGreaterThan(0.98);
+  });
 });

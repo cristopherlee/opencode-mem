@@ -82,6 +82,8 @@ interface OpenCodeMemConfig {
   userProfileCentroidDriftThreshold?: number;
   userProfileEmbeddingMinDescriptionLength?: number;
   userProfileMinEvidenceForRetention?: number;
+  userProfileAutoCleanupEnabled?: boolean;
+  userProfileAutoCleanupInterval?: number;
   userProfileValidationEnabled?: boolean;
   showAutoCaptureToasts?: boolean;
   showUserProfileToasts?: boolean;
@@ -181,6 +183,8 @@ const DEFAULTS: Required<
   userProfileCentroidDriftThreshold: 0.65,
   userProfileEmbeddingMinDescriptionLength: 5,
   userProfileMinEvidenceForRetention: 3,
+  userProfileAutoCleanupEnabled: true,
+  userProfileAutoCleanupInterval: 100,
   userProfileValidationEnabled: false,
   showAutoCaptureToasts: true,
   showUserProfileToasts: true,
@@ -495,6 +499,11 @@ const CONFIG_TEMPLATE = `{
   // Items confirmed fewer times are more likely to be pruned when confidence decays
   "userProfileMinEvidenceForRetention": 3,
 
+  // Periodically merge duplicate or irrelevant profile items with the configured AI provider
+  "userProfileAutoCleanupEnabled": true,
+  // Number of analyzed user prompts between automatic AI cleanup runs
+  "userProfileAutoCleanupInterval": 100,
+
   // Enable LLM validation of existing preferences against recent behavior.
   // When enabled, each analysis round checks if top-5 preferences still match recent prompts.
   // Experimental — disabled by default.
@@ -575,11 +584,23 @@ function getEmbeddingDimensions(model: string): number {
   return dimensionMap[model] || 768;
 }
 
+export function normalizeAutoCaptureMaxContextBytes(value: number): number {
+  if (!Number.isInteger(value) || value < 16384 || value > 16 * 1024 * 1024) {
+    throw new Error(`Invalid autoCaptureMaxContextBytes config: ${value}`);
+  }
+  return value;
+}
+
 function buildConfig(fileConfig: OpenCodeMemConfig) {
   const memoryApiKey = resolveSecretValue(fileConfig.memoryApiKey);
   const embeddingDimensions =
     fileConfig.embeddingDimensions ??
     getEmbeddingDimensions(fileConfig.embeddingModel ?? DEFAULTS.embeddingModel);
+  const autoCaptureMaxContextBytes = normalizeAutoCaptureMaxContextBytes(
+    fileConfig.autoCaptureMaxContextBytes ?? DEFAULTS.autoCaptureMaxContextBytes
+  );
+  const userProfileAutoCleanupInterval =
+    fileConfig.userProfileAutoCleanupInterval ?? DEFAULTS.userProfileAutoCleanupInterval;
 
   if (
     !Number.isInteger(embeddingDimensions) ||
@@ -587,6 +608,11 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     embeddingDimensions > 65536
   ) {
     throw new Error(`Invalid embeddingDimensions config: ${embeddingDimensions}`);
+  }
+  if (!Number.isInteger(userProfileAutoCleanupInterval) || userProfileAutoCleanupInterval <= 0) {
+    throw new Error(
+      `Invalid userProfileAutoCleanupInterval config: ${userProfileAutoCleanupInterval}`
+    );
   }
 
   return {
@@ -612,8 +638,7 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     autoCaptureIterationTimeout:
       fileConfig.autoCaptureIterationTimeout ?? DEFAULTS.autoCaptureIterationTimeout,
     autoCaptureMaxRetries: fileConfig.autoCaptureMaxRetries ?? DEFAULTS.autoCaptureMaxRetries,
-    autoCaptureMaxContextBytes:
-      fileConfig.autoCaptureMaxContextBytes ?? DEFAULTS.autoCaptureMaxContextBytes,
+    autoCaptureMaxContextBytes,
     autoCaptureLanguage: fileConfig.autoCaptureLanguage,
     memoryProvider: (fileConfig.memoryProvider ?? "openai-chat") as
       "openai-chat" | "openai-responses" | "anthropic" | "minimax",
@@ -686,6 +711,9 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
       DEFAULTS.userProfileEmbeddingMinDescriptionLength,
     userProfileMinEvidenceForRetention:
       fileConfig.userProfileMinEvidenceForRetention ?? DEFAULTS.userProfileMinEvidenceForRetention,
+    userProfileAutoCleanupEnabled:
+      fileConfig.userProfileAutoCleanupEnabled ?? DEFAULTS.userProfileAutoCleanupEnabled,
+    userProfileAutoCleanupInterval,
     userProfileValidationEnabled:
       fileConfig.userProfileValidationEnabled ?? DEFAULTS.userProfileValidationEnabled,
     userProfileStaleDays: fileConfig.userProfileStaleDays ?? DEFAULTS.userProfileStaleDays,

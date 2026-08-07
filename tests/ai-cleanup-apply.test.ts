@@ -42,7 +42,7 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       includeIds: ["pref_2", "pref_3"],
       acceptedMerged: [["pref_2", "pref_3"]],
       acceptedRemoved: [],
-      allMergedIds: [["pref_2", "pref_3"]],
+      allMerged: [{ ids: ["pref_2", "pref_3"], result: "scope-a-merged" }],
       allRemovedIds: [],
       explicitAcceptance: true,
     });
@@ -67,7 +67,7 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       includeIds: ["pref_0", "pref_1"],
       acceptedMerged: [],
       acceptedRemoved: [], // removal rejected
-      allMergedIds: [],
+      allMerged: [],
       allRemovedIds: ["pref_1"],
       explicitAcceptance: true,
     });
@@ -88,7 +88,7 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       includeIds: ["pref_0", "pref_1"],
       acceptedMerged: [],
       acceptedRemoved: ["pref_1"],
-      allMergedIds: [],
+      allMerged: [],
       allRemovedIds: ["pref_1"],
       explicitAcceptance: true,
     });
@@ -110,7 +110,7 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       includeIds: ["pref_0", "pref_1"],
       acceptedMerged: [], // merge rejected
       acceptedRemoved: [],
-      allMergedIds: [["pref_0", "pref_1"]],
+      allMerged: [{ ids: ["pref_0", "pref_1"], result: "target-merged" }],
       allRemovedIds: [],
       explicitAcceptance: true,
     });
@@ -118,7 +118,8 @@ describe("mergeCleanupIntoProfile (#237)", () => {
     const descs = result.preferences.map((p) => p.description);
     expect(descs).toContain("outside");
     expect(descs).toContain("source");
-    expect(descs).toContain("target-merged");
+    expect(descs).toContain("target");
+    expect(descs).not.toContain("target-merged");
   });
 
   it("preserves items added after analysis", () => {
@@ -133,7 +134,7 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       includeIds: ["pref_0"],
       acceptedMerged: [],
       acceptedRemoved: [],
-      allMergedIds: [],
+      allMerged: [],
       allRemovedIds: [],
       explicitAcceptance: false,
     });
@@ -155,11 +156,34 @@ describe("mergeCleanupIntoProfile (#237)", () => {
       cleanedData: cleaned,
       acceptedMerged: [],
       acceptedRemoved: [],
-      allMergedIds: [],
+      allMerged: [],
       allRemovedIds: ["pref_1", "pref_2"],
       explicitAcceptance: false,
     });
 
     expect(result.preferences.map((p) => p.description)).toEqual(["a-clean"]);
+  });
+
+  it("removes only the selected occurrence when descriptions are duplicated", () => {
+    const oldProfile = baseProfile(["duplicate", "duplicate", "outside"]);
+    const cleaned = baseProfile(["duplicate-cleaned"]);
+
+    const result = mergeCleanupIntoProfile({
+      currentProfile: oldProfile,
+      oldProfileData: oldProfile,
+      cleanedData: cleaned,
+      includeIds: ["pref_0"],
+      acceptedMerged: [],
+      acceptedRemoved: [],
+      allMerged: [],
+      allRemovedIds: [],
+      explicitAcceptance: false,
+    });
+
+    expect(result.preferences.map((p) => p.description)).toEqual([
+      "duplicate",
+      "outside",
+      "duplicate-cleaned",
+    ]);
   });
 });
