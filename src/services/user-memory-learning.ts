@@ -375,6 +375,50 @@ CRITICAL: Only output observations grounded in the RECENT PROMPTS above. Write d
   return truncate(base);
 }
 
+/** Upper bound for LLM-inferred preference confidence (0–1 scale). */
+export const USER_PROFILE_LLM_CONFIDENCE_MAX = 1;
+
+/** Shared analysis schema for OpenCode structured output and external tool calls. */
+export function createUserProfileAnalysisSchema(z: typeof import("zod").z) {
+  return z.object({
+    preferences: z.array(
+      z.object({
+        category: z.string(),
+        description: z.string(),
+        confidence: z.number().min(0).max(USER_PROFILE_LLM_CONFIDENCE_MAX),
+        evidence: z.array(z.string()),
+      })
+    ),
+    patterns: z.array(
+      z.object({
+        category: z.string(),
+        description: z.string(),
+      })
+    ),
+    workflows: z.array(
+      z.object({
+        description: z.string(),
+        steps: z.array(z.string()),
+      })
+    ),
+    validations: z
+      .array(
+        z.object({
+          index: z.number(),
+          verdict: z.enum([
+            "confirmed",
+            "contradicted",
+            "no_evidence",
+            "inaccurate",
+            "oversimplified",
+          ]),
+          reason: z.string(),
+        })
+      )
+      .optional(),
+  });
+}
+
 type AnalysisResult = { raw: UserProfileData; merged: UserProfileData | null };
 
 function applyValidations(
@@ -484,43 +528,7 @@ CRITICAL: All JSON string values MUST escape double quotes with backslash. Do NO
 Use the update_user_profile tool to save the ${existingProfile ? "updated" : "new"} profile.`;
 
       const { z } = await import("zod");
-      const schema = z.object({
-        preferences: z.array(
-          z.object({
-            category: z.string(),
-            description: z.string(),
-            confidence: z.number().min(0).max(0.5),
-            evidence: z.array(z.string()),
-          })
-        ),
-        patterns: z.array(
-          z.object({
-            category: z.string(),
-            description: z.string(),
-          })
-        ),
-        workflows: z.array(
-          z.object({
-            description: z.string(),
-            steps: z.array(z.string()),
-          })
-        ),
-        validations: z
-          .array(
-            z.object({
-              index: z.number(),
-              verdict: z.enum([
-                "confirmed",
-                "contradicted",
-                "no_evidence",
-                "inaccurate",
-                "oversimplified",
-              ]),
-              reason: z.string(),
-            })
-          )
-          .optional(),
-      });
+      const schema = createUserProfileAnalysisSchema(z);
 
       log("user-profile-learning: calling LLM", { contextLen: context.length });
 
@@ -606,7 +614,11 @@ Use the update_user_profile tool to save the ${existingProfile ? "updated" : "ne
               properties: {
                 category: { type: "string" },
                 description: { type: "string" },
-                confidence: { type: "number", minimum: 0, maximum: 0.5 },
+                confidence: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: USER_PROFILE_LLM_CONFIDENCE_MAX,
+                },
                 evidence: { type: "array", items: { type: "string" }, maxItems: 3 },
               },
               required: ["category", "description", "confidence", "evidence"],
