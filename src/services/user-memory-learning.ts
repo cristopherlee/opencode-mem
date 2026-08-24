@@ -632,6 +632,7 @@ async function analyzeUserProfile(
   existingProfile: UserProfile | null
 ): Promise<AnalysisResult | null> {
   log("user-profile-learning: analyze called", { hasProfile: !!existingProfile });
+  let opencodeProviderError: unknown;
   if (CONFIG.opencodeProvider && CONFIG.opencodeModel) {
     log("user-profile-learning: trying opencode provider");
     try {
@@ -694,6 +695,7 @@ Use the update_user_profile tool to save the ${existingProfile ? "updated" : "ne
       }
       return { raw: rawData, merged: null };
     } catch (e) {
+      opencodeProviderError = e;
       log("user-profile-learning: opencode provider failed, falling back to external API", {
         error: String(e),
       });
@@ -701,6 +703,9 @@ Use the update_user_profile tool to save the ${existingProfile ? "updated" : "ne
   }
 
   if (!CONFIG.memoryModel || !CONFIG.memoryApiUrl) {
+    if (opencodeProviderError) {
+      throw opencodeProviderError;
+    }
     log("User Profile Config Check Failed:", {
       memoryModel: CONFIG.memoryModel,
       memoryApiUrl: CONFIG.memoryApiUrl,
