@@ -107,7 +107,7 @@ async function capturePrompt(
 
         let summaryResult: { summary: string; type: string; tags: string[] } | null;
         try {
-          summaryResult = await generateSummary(context, sessionID, prompt.content, prompt);
+          summaryResult = await generateSummary(ctx, context, sessionID, prompt.content, prompt);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           throw new Error(`Summary generation failed: ${message}`);
@@ -479,6 +479,7 @@ export function buildMarkdownContext(
 }
 
 async function generateSummary(
+  ctx: PluginInput,
   context: string,
   sessionID: string,
   userPrompt: string,
@@ -587,6 +588,26 @@ CAPTURE if: code changed, bug fixed, feature added, decision made`;
       throw opencodeProviderError;
     }
     throw new Error("External API not configured for auto-capture");
+  }
+
+  // Opencode provider failed but a manual fallback is configured — surface a
+  // non-blocking warning so the user knows their primary provider is broken.
+  if (opencodeProviderError && CONFIG.showErrorToasts) {
+    const errMsg =
+      opencodeProviderError instanceof Error
+        ? opencodeProviderError.message
+        : String(opencodeProviderError);
+    const shortReason = errMsg.length > 100 ? errMsg.substring(0, 100) + "..." : errMsg;
+    ctx.client?.tui
+      .showToast({
+        body: {
+          title: "Using fallback provider",
+          message: `OpenCode provider failed (${shortReason}); using configured fallback.`,
+          variant: "warning",
+          duration: 5000,
+        },
+      })
+      .catch(() => {});
   }
 
   const { AIProviderFactory } = await import("./ai/ai-provider-factory.js");
