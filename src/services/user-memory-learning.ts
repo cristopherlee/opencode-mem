@@ -284,8 +284,11 @@ Rules:
   } catch (error) {
     // Guard against corrupt stored profileData (JSON.parse throws) and any other
     // fault: this runs fire-and-forget from the idle timer, so an uncaught rejection
-    // would surface as an unhandled promise rejection. Log and exit cleanly.
+    // would surface as an unhandled promise rejection. The caller (src/index.ts idle
+    // timer) already wraps this call in its own try/catch, and issue #265 requires
+    // provider errors to propagate instead of being masked, so rethrow after logging.
     log("user-profile-learning: aborted", { error: String(error) });
+    throw error;
   } finally {
     isLearningRunning = false;
   }
